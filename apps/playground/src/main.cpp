@@ -2,10 +2,12 @@
 #include <iomanip>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "file.h"
 #include "wip_string.h"
 #include "json_serializer.h"
+#include "uid.h"
 
 void demonstrate_json_serializer() {
     std::cout << "\n=== JSON Serializer Demonstration ===\n" << std::endl;
@@ -45,6 +47,88 @@ void demonstrate_json_serializer() {
     std::cout << "Serialized: " << json_flag << std::endl;
     auto deserialized_flag = bool_serializer.deserialize(json_flag);
     std::cout << "Deserialized: " << (deserialized_flag ? (deserialized_flag.value() ? "true" : "false") : "failed") << std::endl;
+}
+
+void demonstrate_uid() {
+    std::cout << "\n=== UID (UUID) Demonstration ===\n" << std::endl;
+    
+    // Basic UID generation
+    std::cout << "1. Basic UID Generation:" << std::endl;
+    wip::utils::uid::UID uid1;
+    wip::utils::uid::UID uid2 = wip::utils::uid::UID::generate();
+    
+    std::cout << "UID 1: " << uid1.to_string() << std::endl;
+    std::cout << "UID 2: " << uid2.to_string() << std::endl;
+    std::cout << "Are they equal? " << (uid1 == uid2 ? "Yes" : "No") << std::endl;
+    
+    // String round-trip
+    std::cout << "\n2. String Round-trip Conversion:" << std::endl;
+    std::string uid_string = uid1.to_string();
+    wip::utils::uid::UID uid_from_string(uid_string);
+    std::cout << "Original: " << uid_string << std::endl;
+    std::cout << "From String: " << uid_from_string.to_string() << std::endl;
+    std::cout << "Are they equal? " << (uid1 == uid_from_string ? "Yes" : "No") << std::endl;
+    
+    // Null UID
+    std::cout << "\n3. Null UID:" << std::endl;
+    wip::utils::uid::UID null_uid = wip::utils::uid::UID::null();
+    std::cout << "Null UID: " << null_uid.to_string() << std::endl;
+    std::cout << "Is null? " << (null_uid.is_null() ? "Yes" : "No") << std::endl;
+    std::cout << "Is generated UID null? " << (uid1.is_null() ? "Yes" : "No") << std::endl;
+    
+    // Rule of 7 demonstration
+    std::cout << "\n4. Rule of 7 (Copy/Move operations):" << std::endl;
+    wip::utils::uid::UID original = wip::utils::uid::UID::generate();
+    std::cout << "Original: " << original.to_string() << std::endl;
+    
+    // Copy constructor
+    wip::utils::uid::UID copied(original);
+    std::cout << "Copied: " << copied.to_string() << std::endl;
+    std::cout << "Copy works? " << (original == copied ? "Yes" : "No") << std::endl;
+    
+    // Copy assignment
+    wip::utils::uid::UID assigned;
+    assigned = original;
+    std::cout << "Assigned: " << assigned.to_string() << std::endl;
+    std::cout << "Assignment works? " << (original == assigned ? "Yes" : "No") << std::endl;
+    
+    // Move constructor
+    std::string original_str = original.to_string();
+    wip::utils::uid::UID moved(std::move(original));
+    std::cout << "Moved: " << moved.to_string() << std::endl;
+    std::cout << "Move works? " << (moved.to_string() == original_str ? "Yes" : "No") << std::endl;
+    
+    // Hash function demonstration
+    std::cout << "\n5. Hash Function (for containers):" << std::endl;
+    std::unordered_set<wip::utils::uid::UID> uid_set;
+    std::unordered_map<wip::utils::uid::UID, std::string> uid_map;
+    
+    for (int i = 0; i < 5; ++i) {
+        wip::utils::uid::UID uid = wip::utils::uid::UID::generate();
+        uid_set.insert(uid);
+        uid_map[uid] = "Value " + std::to_string(i + 1);
+    }
+    
+    std::cout << "Created " << uid_set.size() << " unique UIDs in set" << std::endl;
+    std::cout << "Created " << uid_map.size() << " entries in map:" << std::endl;
+    
+    for (const auto& [uid, value] : uid_map) {
+        std::cout << "  " << uid.to_string() << " -> " << value << std::endl;
+    }
+    
+    // Uniqueness test
+    std::cout << "\n6. Uniqueness Test (1000 UIDs):" << std::endl;
+    std::unordered_set<std::string> unique_uids;
+    const int test_count = 1000;
+    
+    for (int i = 0; i < test_count; ++i) {
+        wip::utils::uid::UID uid = wip::utils::uid::UID::generate();
+        unique_uids.insert(uid.to_string());
+    }
+    
+    std::cout << "Generated " << test_count << " UIDs" << std::endl;
+    std::cout << "Unique UIDs: " << unique_uids.size() << std::endl;
+    std::cout << "All unique? " << (unique_uids.size() == test_count ? "Yes" : "No") << std::endl;
 }
 
 void demonstrate_string_utilities() {
@@ -175,6 +259,9 @@ int main() {
         
         // Demonstrate JSON serializer
         demonstrate_json_serializer();
+        
+        // Demonstrate UID functionality
+        demonstrate_uid();
         
         std::cout << "\nPlayground demonstration completed successfully!" << std::endl;
         return 0;
