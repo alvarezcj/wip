@@ -251,9 +251,6 @@ int main() {
     try {
         std::cout << "Starting WIP Playground Application..." << std::endl;
         
-        // Demonstrate file utilities
-        wip::utils::file::hello();
-        
         // Demonstrate string utilities
         demonstrate_string_utilities();
         
