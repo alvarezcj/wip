@@ -8,6 +8,7 @@
 #include "wip_string.h"
 #include "json_serializer.h"
 #include "uid.h"
+#include "args.h"
 
 void demonstrate_json_serializer() {
     std::cout << "\n=== JSON Serializer Demonstration ===\n" << std::endl;
@@ -247,6 +248,86 @@ void demonstrate_string_utilities() {
     std::cout << "Random 6-char password: " << wip::utils::string::random_string(6, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*") << std::endl;
 }
 
+void demo_cli_args() {
+    std::cout << "\n--- CLI Args Parser Demo ---\n\n";
+
+    // Create a parser with program info
+    wip::cli::args::ArgumentParser parser("demo", "Demo CLI application for argument parsing", "1.0.0");
+
+    // Add flags
+    parser.add_flag({"-v", "--verbose"}, "verbose")
+          .description("Enable verbose output");
+    parser.add_flag({"-h", "--help"}, "help")
+          .description("Show help message");
+    
+    // Add options
+    parser.add_option({"-f", "--file"}, "file")
+          .description("Input file path")
+          .required();
+    
+    parser.add_option({"-o", "--output"}, "output")
+          .description("Output directory")
+          .default_value(std::string("./output"));
+    
+    parser.add_option({"-c", "--count"}, "count")
+          .description("Number of iterations")
+          .default_value(1);
+
+    // Demo parsing with simulated command line (excluding program name)
+    std::vector<std::string> test_args = {
+        "--verbose",
+        "--file", "input.txt",
+        "--count", "5"
+    };
+
+    std::cout << "Parsing command: demo ";
+    for (size_t i = 0; i < test_args.size(); ++i) {
+        if (i > 0) std::cout << " ";
+        std::cout << test_args[i];
+    }
+    std::cout << "\n\n";
+
+    try {
+        auto result = parser.parse(test_args);
+        
+        if (!result) {
+            std::cout << "Parsing failed!\n";
+            return;
+        }
+        
+        std::cout << "Parsing successful!\n";
+        std::cout << "Parsed results:\n";
+        
+        // Check flags
+        if (result->get_bool("verbose").value_or(false)) {
+            std::cout << "  - Verbose mode: enabled\n";
+        }
+        
+        // Check options
+        auto file = result->get_string("file");
+        if (file) {
+            std::cout << "  - Input file: " << *file << "\n";
+        }
+        
+        auto output = result->get_string("output");
+        if (output) {
+            std::cout << "  - Output directory: " << *output << "\n";
+        }
+        
+        auto count = result->get_int("count");
+        if (count) {
+            std::cout << "  - Count: " << *count << "\n";
+        }
+        
+    } catch (const std::exception& e) {
+        std::cout << "Parsing error: " << e.what() << "\n";
+    }
+
+    // Demo help generation
+    std::cout << "\nGenerated help:\n";
+    std::cout << parser.help() << "\n";
+}
+
 int main() {
     try {
         std::cout << "Starting WIP Playground Application..." << std::endl;
@@ -259,6 +340,9 @@ int main() {
         
         // Demonstrate UID functionality
         demonstrate_uid();
+        
+        // Demonstrate CLI args parsing
+        demo_cli_args();
         
         std::cout << "\nPlayground demonstration completed successfully!" << std::endl;
         return 0;

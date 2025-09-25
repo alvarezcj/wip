@@ -41,10 +41,6 @@ protected:
     std::filesystem::path test_file_nested;
 };
 
-TEST_F(FileTest, HelloFunction) {
-    EXPECT_NO_THROW(hello());
-}
-
 // ==================== File Existence and Type Tests ====================
 
 TEST_F(FileTest, ExistsFunction) {
