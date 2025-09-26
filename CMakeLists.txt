@@ -21,6 +21,7 @@ add_subdirectory(third_party/gtest)
 # wip libraries
 add_subdirectory(libs/cli/args)
 add_subdirectory(libs/utils/file)
+add_subdirectory(libs/utils/rng)
 add_subdirectory(libs/utils/string)
 add_subdirectory(libs/utils/uid)
 add_subdirectory(libs/serialization/serializer)
