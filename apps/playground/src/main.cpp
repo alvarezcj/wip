@@ -9,6 +9,7 @@
 #include "json_serializer.h"
 #include "uid.h"
 #include "args.h"
+#include "dice.h"
 
 void demonstrate_json_serializer() {
     std::cout << "\n=== JSON Serializer Demonstration ===\n" << std::endl;
@@ -328,6 +329,218 @@ void demo_cli_args() {
     std::cout << parser.help() << "\n";
 }
 
+void demonstrate_dice_library() {
+    using namespace wip::game::dice;
+    
+    std::cout << "\n=== Dice Library Demonstration ===\n" << std::endl;
+    
+    // Basic dice rolling
+    std::cout << "1. Basic Dice Rolling:" << std::endl;
+    auto d6 = Die<int>::d6();
+    auto d20 = Die<int>::d20();
+    
+    std::cout << "d6 rolls: ";
+    for (int i = 0; i < 5; ++i) {
+        std::cout << d6.roll() << " ";
+    }
+    std::cout << std::endl;
+    
+    std::cout << "d20 rolls: ";
+    for (int i = 0; i < 5; ++i) {
+        std::cout << d20.roll() << " ";
+    }
+    std::cout << std::endl;
+    
+    // Advantage and disadvantage
+    std::cout << "\n2. Advantage & Disadvantage:" << std::endl;
+    std::cout << "d20 advantage: ";
+    for (int i = 0; i < 3; ++i) {
+        std::cout << d20.advantage() << " ";
+    }
+    std::cout << std::endl;
+    
+    std::cout << "d20 disadvantage: ";
+    for (int i = 0; i < 3; ++i) {
+        std::cout << d20.disadvantage() << " ";
+    }
+    std::cout << std::endl;
+    
+    // Modifiers
+    std::cout << "\n3. Dice Modifiers:" << std::endl;
+    auto modified_d6 = Die<int>::d6();
+    modified_d6.add_modifier(Modifier(ModifierType::Add, 3, "magic bonus"));
+    
+    auto result = modified_d6.roll_detailed();
+    std::cout << "d6 + 3: rolled " << (result.total() - 3) << " + 3 = " << result.total() << std::endl;
+    
+    // Keep highest modifier
+    auto ability_die = Die<int>::d6();
+    ability_die.add_modifier(Modifier(ModifierType::KeepHighest, 3, "keep highest 3"));
+    
+    auto ability_result = ability_die.roll_detailed(4);
+    std::cout << "4d6 keep highest 3: ";
+    std::cout << "rolled [";
+    for (size_t i = 0; i < ability_result.individual_rolls.size(); ++i) {
+        if (i > 0) std::cout << ", ";
+        std::cout << ability_result.individual_rolls[i].value;
+    }
+    std::cout << "] -> kept [";
+    for (size_t i = 0; i < ability_result.kept_values.size(); ++i) {
+        if (i > 0) std::cout << ", ";
+        std::cout << ability_result.kept_values[i];
+    }
+    std::cout << "] = " << ability_result.total() << std::endl;
+    
+    // Custom dice
+    std::cout << "\n4. Custom Dice:" << std::endl;
+    auto fudge = Die<int>::fudge();
+    std::cout << "Fudge die rolls: ";
+    for (int i = 0; i < 10; ++i) {
+        int roll = fudge.roll();
+        if (roll == -1) std::cout << "[-] ";
+        else if (roll == 0) std::cout << "[0] ";
+        else std::cout << "[+] ";
+    }
+    std::cout << std::endl;
+    
+    // Custom weighted die
+    std::vector<int> weighted_faces = {1, 2, 2, 3, 3, 3, 4, 5, 6};
+    Die<int> weighted(weighted_faces);
+    std::cout << "Weighted die (favors 3): ";
+    for (int i = 0; i < 10; ++i) {
+        std::cout << weighted.roll() << " ";
+    }
+    std::cout << std::endl;
+    
+    // Exploding dice
+    std::cout << "\n5. Exploding Dice:" << std::endl;
+    auto exploding_d6 = Die<int>::d6();
+    std::cout << "Exploding d6 results: ";
+    for (int i = 0; i < 5; ++i) {
+        int result = exploding_d6.exploding();
+        std::cout << result;
+        if (result > 6) std::cout << "(!)";
+        std::cout << " ";
+    }
+    std::cout << std::endl;
+    
+    // Dice sets
+    std::cout << "\n6. Dice Sets:" << std::endl;
+    DiceSet<int> damage_dice;
+    damage_dice.add_dice(Die<int>::d8(), 2);  // 2d8
+    damage_dice.add_dice(Die<int>::d6(), 1);  // +1d6
+    
+    auto damage_result = damage_dice.roll_detailed();
+    std::cout << "Damage roll (2d8 + 1d6): ";
+    for (int value : damage_result.kept_values) {
+        std::cout << value << " ";
+    }
+    std::cout << "= " << damage_result.total() << std::endl;
+    
+    // D&D mechanics
+    std::cout << "\n7. D&D Mechanics:" << std::endl;
+    
+    // Ability scores
+    std::cout << "Character ability scores:" << std::endl;
+    auto stats = gaming::dnd::generate_character_stats();
+    for (const auto& stat : stats) {
+        std::cout << "  " << std::setw(12) << stat.first << ": " << std::setw(2) << stat.second;
+        int modifier = (stat.second - 10) / 2;
+        if (modifier >= 0) std::cout << " (+" << modifier << ")";
+        else std::cout << " (" << modifier << ")";
+        std::cout << std::endl;
+    }
+    
+    // Attack rolls
+    std::cout << "\nAttack sequence:" << std::endl;
+    for (int i = 0; i < 3; ++i) {
+        int attack = gaming::dnd::attack_roll(5);  // +5 attack bonus
+        std::cout << "  Attack roll: " << std::setw(2) << attack;
+        if (attack >= 20) std::cout << " (CRITICAL HIT!)";
+        else if (attack >= 15) std::cout << " (Hit)";
+        else std::cout << " (Miss)";
+        std::cout << std::endl;
+    }
+    
+    // Death saving throws
+    std::cout << "\nDeath saving throws:" << std::endl;
+    int successes = 0, failures = 0;
+    for (int i = 0; i < 5 && successes < 3 && failures < 3; ++i) {
+        bool success = gaming::dnd::death_save();
+        std::cout << "  Roll " << (i + 1) << ": ";
+        if (success) {
+            std::cout << "SUCCESS";
+            successes++;
+        } else {
+            std::cout << "FAILURE";
+            failures++;
+        }
+        std::cout << " (S:" << successes << " F:" << failures << ")" << std::endl;
+    }
+    
+    if (successes >= 3) std::cout << "  -> Character STABILIZES!" << std::endl;
+    else if (failures >= 3) std::cout << "  -> Character DIES!" << std::endl;
+    
+    // Dice expressions
+    std::cout << "\n8. Dice Expressions:" << std::endl;
+    std::vector<std::string> expressions = {
+        "d20", "3d6", "2d8+5", "4d6kh3", "1d100"
+    };
+    
+    for (const std::string& expr : expressions) {
+        if (DiceExpression::is_valid(expr)) {
+            auto expr_result = DiceExpression::evaluate(expr);
+            std::cout << "  " << std::setw(8) << expr << " -> " << std::setw(3) 
+                     << expr_result.total() << " (" << expr_result.breakdown << ")" << std::endl;
+        } else {
+            std::cout << "  " << std::setw(8) << expr << " -> INVALID" << std::endl;
+        }
+    }
+    
+    // Gaming utilities
+    std::cout << "\n9. Gaming Utilities:" << std::endl;
+    
+    // Percentile rolls
+    std::cout << "Percentile rolls: ";
+    for (int i = 0; i < 5; ++i) {
+        std::cout << std::setw(3) << gaming::utils::percentile() << "% ";
+    }
+    std::cout << std::endl;
+    
+    // Random table
+    std::map<int, std::string> encounter_table = {
+        {20, "Nothing happens"},
+        {40, "Friendly NPC"},
+        {60, "Treasure found"},
+        {80, "Minor monster"},
+        {95, "Major monster"},
+        {100, "Boss encounter"}
+    };
+    
+    std::cout << "Random encounters: ";
+    for (int i = 0; i < 3; ++i) {
+        std::string encounter = gaming::utils::random_table_entry(encounter_table);
+        std::cout << "[" << encounter << "] ";
+    }
+    std::cout << std::endl;
+    
+    // Dice pools
+    std::cout << "Dice pool (5d6, target 4+): ";
+    for (int i = 0; i < 3; ++i) {
+        int successes = gaming::utils::dice_pool_successes(5, 6, 4);
+        std::cout << successes << " successes  ";
+    }
+    std::cout << std::endl;
+    
+    // Global convenience functions
+    std::cout << "\n10. Quick Roll Functions:" << std::endl;
+    std::cout << "Quick d20: " << wip::game::dice::d20() << std::endl;
+    std::cout << "Quick 3d6: " << roll_dice(3, 6) << std::endl;
+    std::cout << "Notation roll '2d8+3': " << roll("2d8+3") << std::endl;
+    
+    std::cout << "\nDice library demonstration complete!" << std::endl;
+}
+
 int main() {
     try {
         std::cout << "Starting WIP Playground Application..." << std::endl;
@@ -343,6 +556,9 @@ int main() {
         
         // Demonstrate CLI args parsing
         demo_cli_args();
+        
+        // Demonstrate dice library
+        demonstrate_dice_library();
         
         std::cout << "\nPlayground demonstration completed successfully!" << std::endl;
         return 0;

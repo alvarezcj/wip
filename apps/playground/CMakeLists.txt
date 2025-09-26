@@ -9,6 +9,7 @@ target_link_libraries(playground PRIVATE
     wip::utils::string
     wip::utils::uid
     wip::serialization::json_serializer
+    wip::game::dice
     nlohmann_json::nlohmann_json
 )
 
