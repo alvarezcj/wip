@@ -17,6 +17,8 @@ endif()
 # Third-party libraries
 add_subdirectory(third_party/nlohmann_json)
 add_subdirectory(third_party/gtest)
+add_subdirectory(third_party/glfw)
+add_subdirectory(third_party/imgui)
 
 # wip libraries
 add_subdirectory(libs/cli/args)
@@ -30,3 +32,4 @@ add_subdirectory(libs/serialization/json_serializer)
 
 # Apps
 add_subdirectory(apps/playground)
+add_subdirectory(apps/test_gui)
