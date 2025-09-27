@@ -23,6 +23,7 @@ add_subdirectory(third_party/imgui)
 # wip libraries
 add_subdirectory(libs/cli/args)
 add_subdirectory(libs/game/dice)
+add_subdirectory(libs/gui/application)
 add_subdirectory(libs/gui/window)
 add_subdirectory(libs/utils/event)
 add_subdirectory(libs/utils/file)
@@ -35,4 +36,5 @@ add_subdirectory(libs/serialization/json_serializer)
 # Apps
 add_subdirectory(apps/playground)
 add_subdirectory(apps/test_gui)
+add_subdirectory(apps/application_demo)
 add_subdirectory(apps/window_demo)

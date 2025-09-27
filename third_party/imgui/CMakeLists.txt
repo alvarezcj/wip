@@ -4,7 +4,7 @@ include(FetchContent)
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.90.4
+    GIT_TAG docking  # Docking branch with mature docking support
     GIT_SHALLOW TRUE
 )
 
@@ -26,6 +26,17 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 
+# Disable Wayland support to avoid dependencies
+target_compile_definitions(imgui PUBLIC 
+    GLFW_INCLUDE_NONE=1
+    IMGUI_DISABLE_OBSOLETE_FUNCTIONS=1
+)
+
+# Add platform-specific compile definitions
+if(UNIX AND NOT APPLE)
+    target_compile_definitions(imgui PUBLIC _GLFW_X11)
+endif()
+
 # Check for OpenGL headers
 find_path(OPENGL_INCLUDE_DIR GL/gl.h
     PATHS /usr/include /usr/local/include
@@ -45,6 +56,7 @@ if(TARGET glfw AND OPENGL_INCLUDE_DIR)
         ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
     )
+    
     message(STATUS "ImGui GLFW and OpenGL3 backends enabled")
 else()
     message(STATUS "ImGui GLFW/OpenGL3 backends disabled (missing dependencies)")
