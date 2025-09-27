@@ -5,10 +5,11 @@ target_include_directories(test_gui PRIVATE include)
 
 # Link required libraries
 target_link_libraries(test_gui PRIVATE 
-    glfw::glfw
+    wip::gui::window
     imgui::imgui
     wip::utils::string
     wip::utils::rng
+    wip::utils::event
 )
 
 # Platform-specific libraries
