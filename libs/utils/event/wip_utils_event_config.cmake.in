@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find required dependencies
+find_dependency(Threads)
+
+# Include the target file
+include("${CMAKE_CURRENT_LIST_DIR}/wip_utils_event_targets.cmake")
+
+check_required_components(wip_utils_event)
