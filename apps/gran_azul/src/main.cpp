@@ -9,6 +9,7 @@
 #include "analysis_result_panel.h"
 #include "analysis_result.h"
 #include "project_manager.h"
+#include "report_generator.h"
 #include <nfd.h>
 #include <memory>
 #include <iostream>
@@ -150,6 +151,16 @@ public:
     void on_render(Timestep timestep) override {
         // Update widgets
         float delta_time = timestep.seconds();
+        
+        // Update project status in widgets
+        bool has_project = project_manager_->has_project();
+        cppcheck_widget_->set_project_loaded(has_project);
+        
+        if (has_project) {
+            std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
+            cppcheck_widget_->set_project_base_path(project_dir.string());
+        }
+        
         cppcheck_widget_->update(delta_time);
         log_panel_->update(delta_time);
         analysis_panel_->update(delta_time);
@@ -214,10 +225,28 @@ public:
                     case GLFW_KEY_F1:
                         std::cout << "[GRAN_AZUL] F1 pressed - Show help\n";
                         return true;
+                        
+                    case GLFW_KEY_F5:
+                        if (project_manager_->has_project()) {
+                            std::cout << "[GRAN_AZUL] F5 pressed - Run analysis\n";
+                            auto& config = cppcheck_widget_->get_config();
+                            run_cppcheck_analysis(config);
+                        } else {
+                            std::cout << "[GRAN_AZUL] F5 pressed - No project loaded\n";
+                        }
+                        return true;
                     
                     case GLFW_KEY_F11:
                         std::cout << "[GRAN_AZUL] F11 pressed - Toggle fullscreen\n";
                         return true;
+                    
+                    case GLFW_KEY_E:
+                        if (key_event->is_ctrl() && project_manager_->has_project()) {
+                            std::cout << "[GRAN_AZUL] Ctrl+E pressed - Generate report\n";
+                            generate_comprehensive_report();
+                            return true;
+                        }
+                        break;
                 }
             }
         }
@@ -253,6 +282,11 @@ private:
     void run_cppcheck_analysis(const CppcheckConfig& config) {
         std::cout << "[GRAN_AZUL] Running cppcheck analysis with configuration\n";
         
+        if (!project_manager_->has_project()) {
+            std::cout << "[GRAN_AZUL] No project loaded - cannot run analysis\n";
+            return;
+        }
+
         if (!ProcessExecutor::command_exists("cppcheck")) {
             ProcessResult error_result{127, "", "cppcheck command not found", std::chrono::milliseconds(0), false};
             log_panel_->add_log_entry("cppcheck analysis", error_result);
@@ -264,9 +298,39 @@ private:
             analysis_panel_->set_analysis_result(error_analysis_result);
             return;
         }
+
+        // Create a copy of config and modify output file to use project directory
+        CppcheckConfig project_config = config;
+        std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
+        std::filesystem::path output_file = project_dir / "cppcheck_analysis.xml";
+        strncpy(project_config.output_file, output_file.string().c_str(), sizeof(project_config.output_file) - 1);
+        project_config.output_file[sizeof(project_config.output_file) - 1] = '\0';
         
-        // Use the widget's command generation
+        // Always create standardized build directory at .azul-cache/cppcheck-build
+        std::filesystem::path azul_cache_dir = project_dir / ".azul-cache";
+        std::filesystem::path build_dir_path = azul_cache_dir / "cppcheck-build";
+        
+        std::cout << "[GRAN_AZUL] Using standardized build directory: " << build_dir_path << "\n";
+        
+        // Create the cache and build directories
+        std::error_code ec;
+        if (!std::filesystem::create_directories(build_dir_path, ec)) {
+            std::cout << "[GRAN_AZUL] Failed to create build directory: " << ec.message() << "\n";
+            ProcessResult error_result{1, "", "Failed to create build directory: " + ec.message(), std::chrono::milliseconds(0), false};
+            log_panel_->add_log_entry("Create build directory", error_result);
+            return;
+        }
+        
+        // Update the config to use our standardized build directory
+        strncpy(project_config.build_dir, build_dir_path.string().c_str(), sizeof(project_config.build_dir) - 1);
+        project_config.build_dir[sizeof(project_config.build_dir) - 1] = '\0';
+        
+        // Generate command args with project-based output
+        auto original_config = cppcheck_widget_->get_config();
+        cppcheck_widget_->set_config(project_config);
         auto args = cppcheck_widget_->generate_command_args();
+        cppcheck_widget_->set_config(original_config); // Restore original config for UI
+        
         auto result = process_executor.execute("cppcheck", args);
         
         // Create log entry
@@ -277,10 +341,66 @@ private:
         log_panel_->add_log_entry(command_str, result);
         
         std::cout << "[GRAN_AZUL] Cppcheck analysis completed with exit code: " << result.exit_code << "\n";
-        std::cout << "[GRAN_AZUL] Output saved to: " << config.output_file << "\n";
+        std::cout << "[GRAN_AZUL] Output saved to: " << project_config.output_file << "\n";
         
         // Parse and display analysis results
-        parse_and_display_analysis_results(config);
+        parse_and_display_analysis_results(project_config);
+    }
+    
+    void generate_comprehensive_report() {
+        if (!project_manager_->has_project()) {
+            std::cout << "[GRAN_AZUL] No project loaded - cannot generate report\n";
+            return;
+        }
+        
+        std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
+        gran_azul::ReportGenerator generator(project_dir.string());
+        
+        // Analyze project structure
+        const auto& project_config = project_manager_->get_current_project();
+        std::vector<std::string> source_paths;
+        if (strlen(cppcheck_widget_->get_config().source_path) > 0) {
+            std::filesystem::path abs_source = project_dir / cppcheck_widget_->get_config().source_path;
+            source_paths.push_back(abs_source.string());
+        }
+        
+        gran_azul::ProjectSummary project_summary = gran_azul::ReportGenerator::analyze_project_structure(
+            project_dir.string(), source_paths);
+        project_summary.name = project_config.name;
+        project_summary.project_file = project_manager_->get_current_project_path();
+        
+        // Generate report
+        gran_azul::ComprehensiveReport report = generator.generate_report(project_summary);
+        
+        // Add cppcheck results if available
+        std::filesystem::path cppcheck_output = project_dir / "cppcheck_analysis.xml";
+        if (std::filesystem::exists(cppcheck_output)) {
+            generator.add_cppcheck_results(report, cppcheck_output.string());
+        }
+        
+        // Export reports with user-selected paths
+        std::string json_path = select_json_report_save_path();
+        if (json_path.empty()) {
+            std::cout << "[GRAN_AZUL] JSON report export cancelled\n";
+            return;
+        }
+        
+        std::string html_path = select_html_report_save_path();
+        if (html_path.empty()) {
+            std::cout << "[GRAN_AZUL] HTML report export cancelled\n";
+            return;
+        }
+        
+        bool json_success = generator.export_json_report(report, json_path);
+        bool html_success = generator.export_html_report(report, html_path);
+        
+        if (json_success && html_success) {
+            std::cout << "[GRAN_AZUL] Comprehensive reports generated successfully\n";
+            std::cout << "[GRAN_AZUL] JSON: " << json_path << "\n";
+            std::cout << "[GRAN_AZUL] HTML: " << html_path << "\n";
+        } else {
+            std::cout << "[GRAN_AZUL] Some reports failed to generate\n";
+        }
     }
     
     void parse_and_display_analysis_results(const CppcheckConfig& config) {
@@ -364,11 +484,6 @@ private:
         
         if (ImGui::Begin("Cppcheck Configuration", &show_cppcheck_config, ImGuiWindowFlags_AlwaysAutoResize)) {
             cppcheck_widget_->draw();
-            
-            ImGui::Spacing();
-            if (ImGui::Button("Close", ImVec2(80, 0))) {
-                show_cppcheck_config = false;
-            }
         }
         ImGui::End();
     }
@@ -687,6 +802,50 @@ private:
         return "";
     }
     
+    std::string select_json_report_save_path() {
+        std::cout << "[GRAN_AZUL] JSON report save dialog requested\n";
+        
+        nfdchar_t *savePath;
+        nfdfilteritem_t filterItem[1] = { { "JSON Files", "json" } };
+        
+        nfdresult_t result = NFD_SaveDialog(&savePath, filterItem, 1, nullptr, "quality_report.json");
+        
+        if (result == NFD_OKAY) {
+            std::string file_path(savePath);
+            std::cout << "[GRAN_AZUL] Selected JSON report path: " << file_path << "\n";
+            NFD_FreePath(savePath);
+            return file_path;
+        } else if (result == NFD_CANCEL) {
+            std::cout << "[GRAN_AZUL] JSON report save cancelled\n";
+        } else {
+            std::cout << "[GRAN_AZUL] JSON report save error: " << NFD_GetError() << "\n";
+        }
+        
+        return "";
+    }
+    
+    std::string select_html_report_save_path() {
+        std::cout << "[GRAN_AZUL] HTML report save dialog requested\n";
+        
+        nfdchar_t *savePath;
+        nfdfilteritem_t filterItem[1] = { { "HTML Files", "html" } };
+        
+        nfdresult_t result = NFD_SaveDialog(&savePath, filterItem, 1, nullptr, "quality_report.html");
+        
+        if (result == NFD_OKAY) {
+            std::string file_path(savePath);
+            std::cout << "[GRAN_AZUL] Selected HTML report path: " << file_path << "\n";
+            NFD_FreePath(savePath);
+            return file_path;
+        } else if (result == NFD_CANCEL) {
+            std::cout << "[GRAN_AZUL] HTML report save cancelled\n";
+        } else {
+            std::cout << "[GRAN_AZUL] HTML report save error: " << NFD_GetError() << "\n";
+        }
+        
+        return "";
+    }
+    
     void select_source_directory() {
         std::cout << "[GRAN_AZUL] Select source directory requested\n";
         
@@ -741,8 +900,8 @@ private:
                     close_project();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Export Report", "Ctrl+E", nullptr, project_manager_->has_project())) {
-                    std::cout << "[GRAN_AZUL] Export report requested\n";
+                if (ImGui::MenuItem("Generate Report", "Ctrl+E", nullptr, project_manager_->has_project())) {
+                    generate_comprehensive_report();
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit", "Alt+F4")) {
@@ -752,25 +911,26 @@ private:
             }
             
             if (ImGui::BeginMenu("Analysis")) {
-                if (ImGui::MenuItem("Run Full Analysis", "F5")) {
+                bool has_project = project_manager_->has_project();
+                if (ImGui::MenuItem("Run Full Analysis", "F5", nullptr, has_project)) {
                     auto& config = cppcheck_widget_->get_config();
                     run_cppcheck_analysis(config);
                 }
-                if (ImGui::MenuItem("Run Quick Scan", "Ctrl+F5")) {
+                if (ImGui::MenuItem("Run Quick Scan", "Ctrl+F5", nullptr, has_project)) {
                     std::cout << "[GRAN_AZUL] Quick scan requested\n";
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Select Source Directory")) {
+                if (ImGui::MenuItem("Select Source Directory", nullptr, nullptr, has_project)) {
                     select_source_directory();
                 }
-                if (ImGui::MenuItem("Configure Cppcheck")) {
+                if (ImGui::MenuItem("Configure Cppcheck", nullptr, nullptr, has_project)) {
                     show_cppcheck_config = true;
                 }
                 if (ImGui::MenuItem("Test cppcheck --version")) {
                     run_cppcheck_version();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Configure Rules")) {
+                if (ImGui::MenuItem("Configure Rules", nullptr, nullptr, has_project)) {
                     std::cout << "[GRAN_AZUL] Configure rules requested\n";
                 }
                 ImGui::EndMenu();
@@ -857,6 +1017,7 @@ int main() {
         std::cout << "[GRAN_AZUL]   F11 - Toggle fullscreen\n";
         std::cout << "[GRAN_AZUL]   Ctrl+O - Open project\n";
         std::cout << "[GRAN_AZUL]   F5 - Run analysis\n";
+        std::cout << "[GRAN_AZUL]   Ctrl+E - Generate report\n";
         
         // Run the application loop
         app.run();

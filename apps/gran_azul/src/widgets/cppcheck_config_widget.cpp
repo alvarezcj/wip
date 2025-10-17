@@ -1,13 +1,34 @@
 #include "cppcheck_config_widget.h"
+#include "path_selector_widget.h"
 #include <imgui.h>
 #include <iostream>
 #include <sstream>
+#include <filesystem>
 
 namespace gran_azul::widgets {
 
 CppcheckConfigWidget::CppcheckConfigWidget() {
     // Initialize with defaults
+    
+    // Create path selectors
+    source_path_selector_ = std::make_unique<PathSelectorWidget>("Source Path:", PathType::Folder, 120.0f);
+    build_path_selector_ = std::make_unique<PathSelectorWidget>("Build Directory:", PathType::Folder, 120.0f);
+    
+    // Set up callbacks
+    source_path_selector_->set_callback([this](const std::string& path) {
+        std::string relative_path = convert_to_relative_path(path);
+        strncpy(config_.source_path, relative_path.c_str(), sizeof(config_.source_path) - 1);
+        config_.source_path[sizeof(config_.source_path) - 1] = '\0';
+    });
+    
+    build_path_selector_->set_callback([this](const std::string& path) {
+        std::string relative_path = convert_to_relative_path(path);
+        strncpy(config_.build_dir, relative_path.c_str(), sizeof(config_.build_dir) - 1);
+        config_.build_dir[sizeof(config_.build_dir) - 1] = '\0';
+    });
 }
+
+CppcheckConfigWidget::~CppcheckConfigWidget() = default;
 
 void CppcheckConfigWidget::update([[maybe_unused]] float delta_time) {
     // No specific update logic needed for this widget
@@ -31,33 +52,25 @@ void CppcheckConfigWidget::draw() {
 
 void CppcheckConfigWidget::render_source_config() {
     if (ImGui::CollapsingHeader("Source Configuration", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Source Path:");
-        ImGui::InputText("##source_path", config_.source_path, sizeof(config_.source_path));
-        if (ImGui::Button("Select Directory")) {
-            if (on_select_directory_) {
-                std::string selected_dir = on_select_directory_();
-                if (!selected_dir.empty()) {
-                    strncpy(config_.source_path, selected_dir.c_str(), sizeof(config_.source_path) - 1);
-                    config_.source_path[sizeof(config_.source_path) - 1] = '\0';
-                }
-            } else {
-                std::cout << "[CPPCHECK_WIDGET] Directory picker not implemented yet\n";
-            }
+        if (!has_project_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No project loaded. Please create or open a project.");
+            return;
         }
         
-        ImGui::Spacing();
-        ImGui::Text("Output File:");
-        ImGui::InputText("##output_file", config_.output_file, sizeof(config_.output_file));
+        // Update path selectors with current config values
+        source_path_selector_->set_path(config_.source_path);
+        build_path_selector_->set_path(config_.build_dir);
+        
+        // Draw path selectors
+        source_path_selector_->draw_inline();
         
         ImGui::Spacing();
-        ImGui::Text("Build Directory (optional):");
-        ImGui::InputText("##build_dir", config_.build_dir, sizeof(config_.build_dir));
-        ImGui::SameLine();
-        if (ImGui::Button("Create")) {
-            if (on_create_directory_) {
-                on_create_directory_(config_);
-            }
-        }
+        
+        // Build directory is now automatically managed at .azul-cache/cppcheck-build
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Build Directory: Automatically managed at .azul-cache/cppcheck-build");
+        
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Note: Output files will be saved in the project directory");
     }
 }
 
@@ -132,11 +145,15 @@ void CppcheckConfigWidget::render_action_buttons() {
     ImGui::Separator();
     ImGui::Spacing();
     
+    // Disable analysis button if no project is loaded
+    ImGui::BeginDisabled(!has_project_);
     if (ImGui::Button("Run Analysis", ImVec2(120, 0))) {
         if (on_run_analysis_) {
             on_run_analysis_(config_);
         }
     }
+    ImGui::EndDisabled();
+    
     ImGui::SameLine();
     if (ImGui::Button("Test cppcheck --version", ImVec2(160, 0))) {
         if (on_run_version_) {
@@ -144,9 +161,12 @@ void CppcheckConfigWidget::render_action_buttons() {
         }
     }
     ImGui::SameLine();
+    
+    ImGui::BeginDisabled(!has_project_);
     if (ImGui::Button("Reset to Defaults", ImVec2(140, 0))) {
         config_ = CppcheckConfig(); // Reset to defaults
     }
+    ImGui::EndDisabled();
 }
 
 void CppcheckConfigWidget::render_command_preview() {
@@ -385,6 +405,36 @@ std::vector<std::string> CppcheckConfigWidget::generate_command_args() const {
     args.push_back(config_.source_path);
     
     return args;
+}
+
+std::string CppcheckConfigWidget::convert_to_relative_path(const std::string& absolute_path) {
+    if (project_base_path_.empty() || absolute_path.empty()) {
+        return absolute_path;
+    }
+    
+    try {
+        std::filesystem::path abs_path = std::filesystem::absolute(absolute_path);
+        std::filesystem::path base_path = std::filesystem::absolute(project_base_path_);
+        
+        // Check if the path is under the project base
+        std::filesystem::path relative = std::filesystem::relative(abs_path, base_path);
+        
+        // If relative path doesn't start with "../../../..", it's within project
+        std::string relative_str = relative.string();
+        if (relative_str.find("..") != 0) {
+            return relative_str;
+        } else {
+            // Path is outside project, return absolute
+            return absolute_path;
+        }
+    } catch (const std::exception& e) {
+        std::cout << "[CPPCHECK_WIDGET] Error calculating relative path: " << e.what() << std::endl;
+        return absolute_path;
+    }
+}
+
+std::string CppcheckConfigWidget::get_project_base_path() {
+    return project_base_path_;
 }
 
 } // namespace gran_azul::widgets

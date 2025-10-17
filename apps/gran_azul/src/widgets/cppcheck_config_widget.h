@@ -6,14 +6,18 @@
 #include <vector>
 #include <cstring>
 #include <functional>
+#include <memory>
+
+// Forward declare to avoid circular dependency
+namespace gran_azul::widgets { class PathSelectorWidget; }
 
 namespace gran_azul::widgets {
 
 // Cppcheck configuration structure
 struct CppcheckConfig {
-    char source_path[512] = "./";
-    char output_file[512] = "analysis_results.xml";
-    char build_dir[512] = "./cppcheck_build";
+    char source_path[512] = "";
+    char output_file[512] = "cppcheck_analysis.xml";
+    char build_dir[512] = "";
     
     // Analysis options
     bool enable_all = true;
@@ -52,10 +56,10 @@ struct CppcheckConfig {
     bool use_misra_addon = false;
     
     CppcheckConfig() {
-        // Set default source path to gran_azul
-        strcpy(source_path, "apps/gran_azul/src/");
-        strcpy(output_file, "gran_azul_analysis.xml");
-        strcpy(build_dir, "./cppcheck_build");
+        // Set empty defaults for new projects
+        strcpy(source_path, "");
+        strcpy(output_file, "cppcheck_analysis.xml");
+        strcpy(build_dir, "");
     }
 };
 
@@ -72,9 +76,16 @@ private:
     CppcheckVersionCallback on_run_version_;
     CppcheckDirectoryCallback on_create_directory_;
     CppcheckDirectorySelectionCallback on_select_directory_;
+    bool has_project_ = false;
+    std::string project_base_path_;
+    
+    // Path selectors
+    std::unique_ptr<PathSelectorWidget> source_path_selector_;
+    std::unique_ptr<PathSelectorWidget> build_path_selector_;
     
 public:
     CppcheckConfigWidget();
+    ~CppcheckConfigWidget(); // Custom destructor needed for unique_ptr with incomplete type
     
     // Widget interface
     void update(float delta_time) override;
@@ -90,6 +101,10 @@ public:
     void set_directory_callback(CppcheckDirectoryCallback callback) { on_create_directory_ = callback; }
     void set_directory_selection_callback(CppcheckDirectorySelectionCallback callback) { on_select_directory_ = callback; }
     
+    // Project status
+    void set_project_loaded(bool has_project) { has_project_ = has_project; }
+    void set_project_base_path(const std::string& base_path) { project_base_path_ = base_path; }
+    
     // Utility methods
     std::string generate_command_preview() const;
     std::vector<std::string> generate_command_args() const;
@@ -103,6 +118,10 @@ private:
     void render_libraries_addons();
     void render_action_buttons();
     void render_command_preview();
+    
+    // Helper methods for relative path handling
+    std::string convert_to_relative_path(const std::string& absolute_path);
+    std::string get_project_base_path();
 };
 
 } // namespace gran_azul::widgets

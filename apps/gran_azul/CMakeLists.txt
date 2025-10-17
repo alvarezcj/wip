@@ -7,8 +7,10 @@ add_executable(gran_azul
     src/widgets/log_window_panel.cpp
     src/widgets/analysis_result.cpp
     src/widgets/analysis_result_panel.cpp
+    src/widgets/path_selector_widget.cpp
     src/project/project_config.cpp
     src/project/project_manager.cpp
+    src/report/report_generator.cpp
 )
 
 target_link_libraries(gran_azul PRIVATE 
@@ -28,6 +30,7 @@ target_link_libraries(gran_azul PRIVATE
 target_include_directories(gran_azul PRIVATE
     src/widgets
     src/project
+    src/report
 )
 
 # Set output directory
