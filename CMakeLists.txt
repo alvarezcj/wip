@@ -19,6 +19,7 @@ add_subdirectory(third_party/nlohmann_json)
 add_subdirectory(third_party/gtest)
 add_subdirectory(third_party/glfw)
 add_subdirectory(third_party/imgui)
+add_subdirectory(third_party/nativefiledialog-extended)
 
 # wip libraries
 add_subdirectory(libs/cli/args)

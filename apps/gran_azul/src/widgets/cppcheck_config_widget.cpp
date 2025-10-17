@@ -34,8 +34,15 @@ void CppcheckConfigWidget::render_source_config() {
         ImGui::Text("Source Path:");
         ImGui::InputText("##source_path", config_.source_path, sizeof(config_.source_path));
         if (ImGui::Button("Select Directory")) {
-            // TODO: Implement directory picker
-            std::cout << "[CPPCHECK_WIDGET] Directory picker not implemented yet\n";
+            if (on_select_directory_) {
+                std::string selected_dir = on_select_directory_();
+                if (!selected_dir.empty()) {
+                    strncpy(config_.source_path, selected_dir.c_str(), sizeof(config_.source_path) - 1);
+                    config_.source_path[sizeof(config_.source_path) - 1] = '\0';
+                }
+            } else {
+                std::cout << "[CPPCHECK_WIDGET] Directory picker not implemented yet\n";
+            }
         }
         
         ImGui::Spacing();

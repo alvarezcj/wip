@@ -9,6 +9,7 @@
 #include "analysis_result_panel.h"
 #include "analysis_result.h"
 #include "project_manager.h"
+#include <nfd.h>
 #include <memory>
 #include <iostream>
 #include <filesystem>
@@ -124,6 +125,9 @@ public:
     void on_attach() override {
         std::cout << "[GRAN_AZUL] Application layer attached\n";
         
+        // Initialize NFD (nativefiledialog-extended)
+        NFD_Init();
+        
         // Now it's safe to initialize ImGui-dependent components
         font_system.load_fonts();
         apply_gran_azul_theme();
@@ -133,6 +137,9 @@ public:
 
     void on_detach() override {
         std::cout << "[GRAN_AZUL] Application layer detached\n";
+        
+        // Cleanup NFD (nativefiledialog-extended)
+        NFD_Quit();
     }
 
     void on_update(Timestep timestep) override {
@@ -231,6 +238,10 @@ private:
         
         cppcheck_widget_->set_directory_callback([this](const CppcheckConfig& config) {
             create_build_directory(config);
+        });
+        
+        cppcheck_widget_->set_directory_selection_callback([this]() -> std::string {
+            return select_directory_dialog();
         });
         
         // Setup analysis result panel callbacks
@@ -450,22 +461,68 @@ private:
     // Project management methods
     void create_new_project() {
         std::cout << "[GRAN_AZUL] Create new project requested\n";
-        // Create a project with the current working directory as source
-        if (project_manager_->create_new_project("Test Project", std::filesystem::current_path().string())) {
-            update_ui_from_project();
-            // Auto-save the project for testing
-            project_manager_->save_project_as("test_project.granazul");
+        
+        nfdchar_t *savePath;
+        nfdfilteritem_t filterItem[1] = { { "Gran Azul Projects", "granazul" } };
+        
+        nfdresult_t result = NFD_SaveDialog(&savePath, filterItem, 1, nullptr, "New Project.granazul");
+        
+        if (result == NFD_OKAY) {
+            std::filesystem::path project_path(savePath);
+            std::string project_dir = project_path.parent_path().string();
+            
+            std::cout << "[GRAN_AZUL] Creating project in directory: " << project_dir << "\n";
+            
+            // Create project with selected directory as root
+            if (project_manager_->create_new_project("New Project", project_dir)) {
+                update_ui_from_project();
+                
+                // Save the project with the selected filename
+                if (project_manager_->save_project_as(savePath)) {
+                    std::cout << "[GRAN_AZUL] New project created and saved: " << savePath << "\n";
+                } else {
+                    std::cout << "[GRAN_AZUL] Project created but failed to save\n";
+                }
+            } else {
+                std::cout << "[GRAN_AZUL] Failed to create project\n";
+            }
+            
+            // Remember to free the path memory!
+            NFD_FreePath(savePath);
+            
+        } else if (result == NFD_CANCEL) {
+            std::cout << "[GRAN_AZUL] Project creation cancelled\n";
+        } else {
+            std::cout << "[GRAN_AZUL] Project creation error: " << NFD_GetError() << "\n";
         }
     }
     
     void open_project() {
         std::cout << "[GRAN_AZUL] Open project requested\n";
-        // TODO: Implement file dialog for project selection
-        // For now, try to load a default project if it exists
-        if (std::filesystem::exists("test_project.granazul")) {
-            if (project_manager_->load_project("test_project.granazul")) {
+        
+        nfdchar_t *outPath;
+        nfdfilteritem_t filterItem[1] = { { "Gran Azul Projects", "granazul" } };
+        
+        nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, nullptr);
+        
+        if (result == NFD_OKAY) {
+            std::string file_path(outPath);
+            std::cout << "[GRAN_AZUL] Selected project file: " << file_path << "\n";
+            
+            if (project_manager_->load_project(file_path)) {
                 update_ui_from_project();
+                std::cout << "[GRAN_AZUL] Project loaded successfully\n";
+            } else {
+                std::cout << "[GRAN_AZUL] Failed to load project file\n";
             }
+            
+            // Remember to free the path memory!
+            NFD_FreePath(outPath);
+            
+        } else if (result == NFD_CANCEL) {
+            std::cout << "[GRAN_AZUL] Project opening cancelled\n";
+        } else {
+            std::cout << "[GRAN_AZUL] Project opening error: " << NFD_GetError() << "\n";
         }
     }
     
@@ -479,8 +536,40 @@ private:
     void save_project_as() {
         if (project_manager_->has_project()) {
             sync_project_from_ui();
-            // TODO: Implement file dialog for save location
-            project_manager_->save_project_as("test_project.granazul");
+            
+            nfdchar_t *savePath;
+            nfdfilteritem_t filterItem[1] = { { "Gran Azul Projects", "granazul" } };
+            
+            // Get current project name or use default
+            std::string default_name = "Project.granazul";
+            if (project_manager_->has_project()) {
+                const auto& project = project_manager_->get_current_project();
+                if (!project.name.empty()) {
+                    default_name = project.name + ".granazul";
+                }
+            }
+            
+            nfdresult_t result = NFD_SaveDialog(&savePath, filterItem, 1, nullptr, default_name.c_str());
+            
+            if (result == NFD_OKAY) {
+                std::string file_path(savePath);
+                
+                std::cout << "[GRAN_AZUL] Saving project to: " << file_path << "\n";
+                
+                if (project_manager_->save_project_as(file_path)) {
+                    std::cout << "[GRAN_AZUL] Project saved successfully\n";
+                } else {
+                    std::cout << "[GRAN_AZUL] Failed to save project\n";
+                }
+                
+                // Remember to free the path memory!
+                NFD_FreePath(savePath);
+                
+            } else if (result == NFD_CANCEL) {
+                std::cout << "[GRAN_AZUL] Save project cancelled\n";
+            } else {
+                std::cout << "[GRAN_AZUL] Save project error: " << NFD_GetError() << "\n";
+            }
         }
     }
     
@@ -571,6 +660,66 @@ private:
             std::cout << "[GRAN_AZUL] Project updated from UI" << std::endl;
         }
     }
+    
+    std::string select_directory_dialog() {
+        std::cout << "[GRAN_AZUL] Directory selection dialog requested\n";
+        
+        nfdchar_t *outPath;
+        nfdfilteritem_t filterItem[1] = { { "Directory", "" } };
+        
+        nfdresult_t result = NFD_PickFolder(&outPath, nullptr);
+        
+        if (result == NFD_OKAY) {
+            std::string directory_path(outPath);
+            
+            std::cout << "[GRAN_AZUL] Selected directory: " << directory_path << "\n";
+            
+            // Remember to free the path memory!
+            NFD_FreePath(outPath);
+            
+            return directory_path;
+        } else if (result == NFD_CANCEL) {
+            std::cout << "[GRAN_AZUL] Directory selection cancelled\n";
+        } else {
+            std::cout << "[GRAN_AZUL] Directory selection error: " << NFD_GetError() << "\n";
+        }
+        
+        return "";
+    }
+    
+    void select_source_directory() {
+        std::cout << "[GRAN_AZUL] Select source directory requested\n";
+        
+        nfdchar_t *outPath;
+        nfdresult_t result = NFD_PickFolder(&outPath, nullptr);
+        
+        if (result == NFD_OKAY) {
+            std::string directory_path(outPath);
+            
+            std::cout << "[GRAN_AZUL] Selected directory: " << directory_path << "\n";
+            
+            // Update the cppcheck configuration
+            auto& config = const_cast<CppcheckConfig&>(cppcheck_widget_->get_config());
+            strncpy(config.source_path, directory_path.c_str(), sizeof(config.source_path) - 1);
+            config.source_path[sizeof(config.source_path) - 1] = '\0';
+            
+            // Update the widget with new configuration
+            cppcheck_widget_->set_config(config);
+            
+            // If we have a project loaded, sync the changes
+            if (project_manager_->has_project()) {
+                sync_project_from_ui();
+            }
+            
+            // Remember to free the path memory!
+            NFD_FreePath(outPath);
+            
+        } else if (result == NFD_CANCEL) {
+            std::cout << "[GRAN_AZUL] Directory selection cancelled\n";
+        } else {
+            std::cout << "[GRAN_AZUL] Directory selection error: " << NFD_GetError() << "\n";
+        }
+    }
 
     void render_menu_bar() {
         if (ImGui::BeginMenuBar()) {
@@ -611,6 +760,9 @@ private:
                     std::cout << "[GRAN_AZUL] Quick scan requested\n";
                 }
                 ImGui::Separator();
+                if (ImGui::MenuItem("Select Source Directory")) {
+                    select_source_directory();
+                }
                 if (ImGui::MenuItem("Configure Cppcheck")) {
                     show_cppcheck_config = true;
                 }

@@ -18,6 +18,7 @@ target_link_libraries(gran_azul PRIVATE
     wip::utils::process
     wip::gui::widgets
     wip::serialization::json_serializer
+    nfd
     OpenGL::GL
     imgui::imgui
     ${X11_LIBRARIES}

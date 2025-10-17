@@ -63,6 +63,7 @@ struct CppcheckConfig {
 using CppcheckAnalysisCallback = std::function<void(const CppcheckConfig&)>;
 using CppcheckVersionCallback = std::function<void()>;
 using CppcheckDirectoryCallback = std::function<void(const CppcheckConfig&)>;
+using CppcheckDirectorySelectionCallback = std::function<std::string()>;
 
 class CppcheckConfigWidget : public wip::gui::Widget {
 private:
@@ -70,6 +71,7 @@ private:
     CppcheckAnalysisCallback on_run_analysis_;
     CppcheckVersionCallback on_run_version_;
     CppcheckDirectoryCallback on_create_directory_;
+    CppcheckDirectorySelectionCallback on_select_directory_;
     
 public:
     CppcheckConfigWidget();
@@ -86,6 +88,7 @@ public:
     void set_analysis_callback(CppcheckAnalysisCallback callback) { on_run_analysis_ = callback; }
     void set_version_callback(CppcheckVersionCallback callback) { on_run_version_ = callback; }
     void set_directory_callback(CppcheckDirectoryCallback callback) { on_create_directory_ = callback; }
+    void set_directory_selection_callback(CppcheckDirectorySelectionCallback callback) { on_select_directory_ = callback; }
     
     // Utility methods
     std::string generate_command_preview() const;
