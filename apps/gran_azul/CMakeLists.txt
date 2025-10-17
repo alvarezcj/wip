@@ -7,6 +7,8 @@ add_executable(gran_azul
     src/widgets/log_window_panel.cpp
     src/widgets/analysis_result.cpp
     src/widgets/analysis_result_panel.cpp
+    src/project/project_config.cpp
+    src/project/project_manager.cpp
 )
 
 target_link_libraries(gran_azul PRIVATE 
@@ -14,15 +16,17 @@ target_link_libraries(gran_azul PRIVATE
     wip::gui::window
     wip::utils::event
     wip::utils::process
-    wip_gui_widgets
+    wip::gui::widgets
+    wip::serialization::json_serializer
     OpenGL::GL
     imgui::imgui
     ${X11_LIBRARIES}
 )
 
-# Add include directories for local widgets
+# Add include directories for local widgets and project
 target_include_directories(gran_azul PRIVATE
     src/widgets
+    src/project
 )
 
 # Set output directory

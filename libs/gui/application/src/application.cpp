@@ -199,8 +199,6 @@ void Application::run() {
     
     // Main application loop
     while (!should_quit()) {
-        std::cout << "." << std::flush;
-
         // Calculate frame timing
         Timestep timestep = calculate_timestep();
         

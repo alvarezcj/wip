@@ -8,8 +8,10 @@
 #include "log_window_panel.h"
 #include "analysis_result_panel.h"
 #include "analysis_result.h"
+#include "project_manager.h"
 #include <memory>
 #include <iostream>
+#include <filesystem>
 #include <vector>
 #include <string>
 #include <chrono>
@@ -99,6 +101,9 @@ private:
     std::unique_ptr<LogWindowPanel> log_panel_;
     std::unique_ptr<AnalysisResultPanel> analysis_panel_;
     
+    // Project management
+    std::unique_ptr<gran_azul::ProjectManager> project_manager_;
+    
     // Window state
     bool show_cppcheck_config = false;
 
@@ -108,6 +113,9 @@ public:
         cppcheck_widget_ = std::make_unique<CppcheckConfigWidget>();
         log_panel_ = std::make_unique<LogWindowPanel>();
         analysis_panel_ = std::make_unique<AnalysisResultPanel>("Analysis Results");
+        
+        // Create project manager
+        project_manager_ = std::make_unique<gran_azul::ProjectManager>();
         
         // Setup widget callbacks
         setup_widget_callbacks();
@@ -438,18 +446,153 @@ private:
         colors[ImGuiCol_TabSelected] = ImVec4(current_theme.accent_color.x * 0.9f, current_theme.accent_color.y * 0.9f, 
                                              current_theme.accent_color.z * 0.9f, current_theme.accent_color.w);
     }
+    
+    // Project management methods
+    void create_new_project() {
+        std::cout << "[GRAN_AZUL] Create new project requested\n";
+        // Create a project with the current working directory as source
+        if (project_manager_->create_new_project("Test Project", std::filesystem::current_path().string())) {
+            update_ui_from_project();
+            // Auto-save the project for testing
+            project_manager_->save_project_as("test_project.granazul");
+        }
+    }
+    
+    void open_project() {
+        std::cout << "[GRAN_AZUL] Open project requested\n";
+        // TODO: Implement file dialog for project selection
+        // For now, try to load a default project if it exists
+        if (std::filesystem::exists("test_project.granazul")) {
+            if (project_manager_->load_project("test_project.granazul")) {
+                update_ui_from_project();
+            }
+        }
+    }
+    
+    void save_project() {
+        if (project_manager_->has_project()) {
+            sync_project_from_ui();
+            project_manager_->save_project();
+        }
+    }
+    
+    void save_project_as() {
+        if (project_manager_->has_project()) {
+            sync_project_from_ui();
+            // TODO: Implement file dialog for save location
+            project_manager_->save_project_as("test_project.granazul");
+        }
+    }
+    
+    void close_project() {
+        project_manager_->close_project();
+        // Reset UI to defaults
+        std::cout << "[GRAN_AZUL] Project closed\n";
+    }
+    
+    void update_ui_from_project() {
+        if (project_manager_->has_project()) {
+            const auto& project = project_manager_->get_current_project();
+            
+            // Update cppcheck widget configuration from project
+            CppcheckConfig cppcheck_config;
+            
+            // Copy analysis settings from project to cppcheck config
+            const auto& analysis = project.analysis;
+            strcpy(cppcheck_config.source_path, analysis.source_path.c_str());
+            strcpy(cppcheck_config.output_file, analysis.output_file.c_str());
+            strcpy(cppcheck_config.build_dir, analysis.build_dir.c_str());
+            
+            cppcheck_config.enable_all = analysis.enable_all;
+            cppcheck_config.enable_warning = analysis.enable_warning;
+            cppcheck_config.enable_style = analysis.enable_style;
+            cppcheck_config.enable_performance = analysis.enable_performance;
+            cppcheck_config.enable_portability = analysis.enable_portability;
+            cppcheck_config.enable_information = analysis.enable_information;
+            cppcheck_config.enable_unused_function = analysis.enable_unused_function;
+            cppcheck_config.enable_missing_include = analysis.enable_missing_include;
+            
+            cppcheck_config.check_level = analysis.check_level;
+            cppcheck_config.inconclusive = analysis.inconclusive;
+            cppcheck_config.verbose = analysis.verbose;
+            cppcheck_config.cpp_standard = analysis.cpp_standard;
+            cppcheck_config.platform = analysis.platform;
+            cppcheck_config.job_count = analysis.job_count;
+            cppcheck_config.quiet = analysis.quiet;
+            
+            cppcheck_config.suppress_unused_function = analysis.suppress_unused_function;
+            cppcheck_config.suppress_missing_include_system = analysis.suppress_missing_include_system;
+            cppcheck_config.suppress_missing_include = analysis.suppress_missing_include;
+            cppcheck_config.suppress_duplicate_conditional = analysis.suppress_duplicate_conditional;
+            cppcheck_config.use_posix_library = analysis.use_posix_library;
+            cppcheck_config.use_misra_addon = analysis.use_misra_addon;
+            
+            cppcheck_widget_->set_config(cppcheck_config);
+            
+            std::cout << "[GRAN_AZUL] UI updated from project: " << project.name << std::endl;
+        }
+    }
+    
+    void sync_project_from_ui() {
+        if (project_manager_->has_project()) {
+            auto& project = project_manager_->get_current_project_mutable();
+            const auto& cppcheck_config = cppcheck_widget_->get_config();
+            
+            // Update project analysis settings from UI
+            auto& analysis = project.analysis;
+            analysis.source_path = cppcheck_config.source_path;
+            analysis.output_file = cppcheck_config.output_file;
+            analysis.build_dir = cppcheck_config.build_dir;
+            
+            analysis.enable_all = cppcheck_config.enable_all;
+            analysis.enable_warning = cppcheck_config.enable_warning;
+            analysis.enable_style = cppcheck_config.enable_style;
+            analysis.enable_performance = cppcheck_config.enable_performance;
+            analysis.enable_portability = cppcheck_config.enable_portability;
+            analysis.enable_information = cppcheck_config.enable_information;
+            analysis.enable_unused_function = cppcheck_config.enable_unused_function;
+            analysis.enable_missing_include = cppcheck_config.enable_missing_include;
+            
+            analysis.check_level = cppcheck_config.check_level;
+            analysis.inconclusive = cppcheck_config.inconclusive;
+            analysis.verbose = cppcheck_config.verbose;
+            analysis.cpp_standard = cppcheck_config.cpp_standard;
+            analysis.platform = cppcheck_config.platform;
+            analysis.job_count = cppcheck_config.job_count;
+            analysis.quiet = cppcheck_config.quiet;
+            
+            analysis.suppress_unused_function = cppcheck_config.suppress_unused_function;
+            analysis.suppress_missing_include_system = cppcheck_config.suppress_missing_include_system;
+            analysis.suppress_missing_include = cppcheck_config.suppress_missing_include;
+            analysis.suppress_duplicate_conditional = cppcheck_config.suppress_duplicate_conditional;
+            analysis.use_posix_library = cppcheck_config.use_posix_library;
+            analysis.use_misra_addon = cppcheck_config.use_misra_addon;
+            
+            std::cout << "[GRAN_AZUL] Project updated from UI" << std::endl;
+        }
+    }
 
     void render_menu_bar() {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
-                    std::cout << "[GRAN_AZUL] Open project requested\n";
+                if (ImGui::MenuItem("New Project", "Ctrl+N")) {
+                    create_new_project();
                 }
-                if (ImGui::MenuItem("Open Recent")) {
-                    std::cout << "[GRAN_AZUL] Open recent requested\n";
+                if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
+                    open_project();
+                }
+                if (ImGui::MenuItem("Save Project", "Ctrl+S", nullptr, project_manager_->has_project())) {
+                    save_project();
+                }
+                if (ImGui::MenuItem("Save Project As...", "Ctrl+Shift+S", nullptr, project_manager_->has_project())) {
+                    save_project_as();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Export Report", "Ctrl+E")) {
+                if (ImGui::MenuItem("Close Project", nullptr, nullptr, project_manager_->has_project())) {
+                    close_project();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Export Report", "Ctrl+E", nullptr, project_manager_->has_project())) {
                     std::cout << "[GRAN_AZUL] Export report requested\n";
                 }
                 ImGui::Separator();
