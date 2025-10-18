@@ -24,8 +24,9 @@ struct AnalysisIssue {
     std::string id;             // Cppcheck rule ID (e.g., "nullPointer")
     std::string message;        // Human readable description
     int cwe;                    // Common Weakness Enumeration ID (0 if none)
+    bool false_positive;        // Whether this issue is marked as false positive
     
-    AnalysisIssue() : line(0), column(0), severity(IssueSeverity::INFORMATION), cwe(0) {}
+    AnalysisIssue() : line(0), column(0), severity(IssueSeverity::INFORMATION), cwe(0), false_positive(false) {}
     
     // Convert severity enum to string for display
     std::string severity_string() const;
@@ -64,6 +65,9 @@ struct AnalysisResult {
 
 // Utility functions for parsing cppcheck JSON output
 namespace analysis_parser {
+    
+    // Parse the current cppcheck format
+    bool parse_cppcheck_format(const std::string& line, AnalysisIssue& issue);
     
     // Parse a single JSON line from cppcheck output
     bool parse_issue_line(const std::string& json_line, AnalysisIssue& issue);

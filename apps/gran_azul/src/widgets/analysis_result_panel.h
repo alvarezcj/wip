@@ -19,6 +19,7 @@ private:
     bool show_performance_ = true;
     bool show_portability_ = true;
     bool show_information_ = true;
+    bool show_false_positives_ = false; // Hide false positives by default
     int sort_column_ = 0; // 0=file, 1=line, 2=severity, 3=message
     bool sort_ascending_ = true;
     
@@ -39,6 +40,10 @@ public:
     // Callback setters
     void set_file_open_callback(FileOpenCallback callback) { on_file_open_ = callback; }
     
+    // False positive management
+    void save_false_positives(const std::string& project_path = "") const;
+    void load_false_positives(const std::string& project_path = "");
+    
 private:
     void render_summary();
     void render_filters();
@@ -54,6 +59,9 @@ private:
     // UI helpers
     void draw_severity_badge(IssueSeverity severity, int index);
     const char* get_sort_arrow(int column) const;
+    
+    // False positive management helpers
+    std::string get_false_positives_file_path(const std::string& project_path = "") const;
 };
 
 } // namespace gran_azul::widgets

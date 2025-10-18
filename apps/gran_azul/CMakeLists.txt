@@ -8,6 +8,8 @@ add_executable(gran_azul
     src/widgets/analysis_result.cpp
     src/widgets/analysis_result_panel.cpp
     src/widgets/path_selector_widget.cpp
+    src/widgets/progress_dialog.cpp
+    src/utils/async_process_executor.cpp
     src/project/project_config.cpp
     src/project/project_manager.cpp
     src/report/report_generator.cpp

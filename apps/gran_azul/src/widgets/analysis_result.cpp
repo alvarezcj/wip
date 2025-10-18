@@ -6,6 +6,7 @@
 #include <set>
 #include <ctime>
 #include <iomanip>
+#include <regex>
 
 namespace gran_azul::widgets {
 
@@ -142,15 +143,44 @@ int extract_json_int_value(const std::string& line, const std::string& key) {
     }
 }
 
+// Parse the current cppcheck format: {file:/path,line:123,column:45,severity:style,id:shadowFunction,message:text,cwe:398}
+bool parse_cppcheck_format(const std::string& line, AnalysisIssue& issue) {
+    // Use regex to parse the format
+    // Pattern: {file:([^,]+),line:(\d+),column:(\d+),severity:([^,]+),id:([^,]+),message:([^,]+),cwe:(\d+)}
+    std::regex pattern(R"(\{file:([^,]+),line:(\d+),column:(\d+),severity:([^,]+),id:([^,]+),message:([^,}]+),cwe:(\d+)\})");
+    std::smatch match;
+    
+    if (std::regex_match(line, match, pattern) && match.size() == 8) {
+        issue.file = match[1].str();
+        issue.line = std::stoi(match[2].str());
+        issue.column = std::stoi(match[3].str());
+        issue.severity = string_to_severity(match[4].str());
+        issue.id = match[5].str();
+        issue.message = match[6].str();
+        issue.cwe = std::stoi(match[7].str());
+        
+        return !issue.file.empty() && issue.line > 0 && !issue.id.empty();
+    }
+    
+    return false;
+}
+
 bool parse_issue_line(const std::string& json_line, AnalysisIssue& issue) {
-    // Simple JSON parsing for cppcheck output format
+    // Handle both JSON format and the current cppcheck format
+    // Current format: {file:/path,line:123,column:45,severity:style,id:shadowFunction,message:text,cwe:398}
     // Expected format: {"file":"path","line":123,"column":45,"severity":"error","id":"nullPointer","message":"text","cwe":476}
     
     if (json_line.empty() || json_line[0] != '{') {
         return false;
     }
     
-    // Extract fields
+    // Check if it's the current cppcheck format (no quotes around field names)
+    if (json_line.find("file:") != std::string::npos && json_line.find("\"file\"") == std::string::npos) {
+        // Parse the current cppcheck format
+        return parse_cppcheck_format(json_line, issue);
+    }
+    
+    // Extract fields for standard JSON format
     issue.file = extract_json_string_value(json_line, "file");
     issue.line = extract_json_int_value(json_line, "line");
     issue.column = extract_json_int_value(json_line, "column");

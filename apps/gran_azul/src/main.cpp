@@ -8,11 +8,15 @@
 #include "log_window_panel.h"
 #include "analysis_result_panel.h"
 #include "analysis_result.h"
+#include "progress_dialog.h"
+#include "utils/async_process_executor.h"
 #include "project_manager.h"
 #include "report_generator.h"
 #include <nfd.h>
 #include <memory>
 #include <iostream>
+#include <atomic>
+#include <mutex>
 #include <filesystem>
 #include <vector>
 #include <string>
@@ -102,6 +106,17 @@ private:
     std::unique_ptr<CppcheckConfigWidget> cppcheck_widget_;
     std::unique_ptr<LogWindowPanel> log_panel_;
     std::unique_ptr<AnalysisResultPanel> analysis_panel_;
+    std::unique_ptr<gran_azul::widgets::ProgressDialog> progress_dialog_;
+    
+    // Async execution
+    std::unique_ptr<gran_azul::utils::AsyncProcessExecutor> async_executor_;
+    
+    // Analysis completion handling (for thread-safe UI updates)
+    std::atomic<bool> analysis_completed_{false};
+    std::mutex completion_data_mutex_;
+    wip::utils::process::ProcessResult pending_result_;
+    CppcheckConfig pending_config_;
+    std::vector<std::string> pending_args_;
     
     // Project management
     std::unique_ptr<gran_azul::ProjectManager> project_manager_;
@@ -115,6 +130,10 @@ public:
         cppcheck_widget_ = std::make_unique<CppcheckConfigWidget>();
         log_panel_ = std::make_unique<LogWindowPanel>();
         analysis_panel_ = std::make_unique<AnalysisResultPanel>("Analysis Results");
+        progress_dialog_ = std::make_unique<gran_azul::widgets::ProgressDialog>("Analysis Progress");
+        
+        // Create async executor
+        async_executor_ = std::make_unique<gran_azul::utils::AsyncProcessExecutor>();
         
         // Create project manager
         project_manager_ = std::make_unique<gran_azul::ProjectManager>();
@@ -144,8 +163,12 @@ public:
     }
 
     void on_update(Timestep timestep) override {
-        // Application logic updates will go here
-        // For now, just a basic update loop
+        // Check for completed analysis and handle on main thread
+        if (analysis_completed_.load()) {
+            std::cout << "[GRAN_AZUL] Main thread detected analysis completion\n";
+            handle_analysis_completion();
+            analysis_completed_.store(false);
+        }
     }
 
     void on_render(Timestep timestep) override {
@@ -164,6 +187,7 @@ public:
         cppcheck_widget_->update(delta_time);
         log_panel_->update(delta_time);
         analysis_panel_->update(delta_time);
+        progress_dialog_->update(delta_time);
         
         // Main application window with docking support
         ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -205,6 +229,9 @@ public:
         if (analysis_panel_->is_visible()) {
             analysis_panel_->draw();
         }
+        
+        // Progress dialog (rendered on top)
+        progress_dialog_->draw();
         
         // Cppcheck configuration window
         if (show_cppcheck_config) {
@@ -279,8 +306,32 @@ private:
         });
     }
     
+    void handle_analysis_completion() {
+        std::cout << "[GRAN_AZUL] Handling analysis completion on main thread\n";
+        std::lock_guard<std::mutex> lock(completion_data_mutex_);
+        
+        // Create log entry
+        std::string command_str = "cppcheck";
+        for (const auto& arg : pending_args_) {
+            command_str += " " + arg;
+        }
+        log_panel_->add_log_entry(command_str, pending_result_);
+        
+        std::cout << "[GRAN_AZUL] Cppcheck analysis completed with exit code: " << pending_result_.exit_code << "\n";
+        std::cout << "[GRAN_AZUL] Output saved to: " << pending_config_.output_file << "\n";
+        
+        // Update progress dialog
+        std::cout << "[GRAN_AZUL] Setting progress dialog as completed\n";
+        progress_dialog_->set_completed(pending_result_.success(), 
+            pending_result_.success() ? "Analysis completed successfully" : "Analysis completed with errors");
+        
+        // Parse and display analysis results
+        parse_and_display_analysis_results(pending_config_);
+        std::cout << "[GRAN_AZUL] Analysis completion handling finished\n";
+    }
+    
     void run_cppcheck_analysis(const CppcheckConfig& config) {
-        std::cout << "[GRAN_AZUL] Running cppcheck analysis with configuration\n";
+        std::cout << "[GRAN_AZUL] Starting async cppcheck analysis\n";
         
         if (!project_manager_->has_project()) {
             std::cout << "[GRAN_AZUL] No project loaded - cannot run analysis\n";
@@ -299,6 +350,12 @@ private:
             return;
         }
 
+        // If already running, show progress dialog
+        if (async_executor_->is_running()) {
+            progress_dialog_->show("Analysis already running...");
+            return;
+        }
+
         // Create a copy of config and modify output file to use project directory
         CppcheckConfig project_config = config;
         std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
@@ -314,7 +371,8 @@ private:
         
         // Create the cache and build directories
         std::error_code ec;
-        if (!std::filesystem::create_directories(build_dir_path, ec)) {
+        std::filesystem::create_directories(build_dir_path, ec);
+        if (ec) {
             std::cout << "[GRAN_AZUL] Failed to create build directory: " << ec.message() << "\n";
             ProcessResult error_result{1, "", "Failed to create build directory: " + ec.message(), std::chrono::milliseconds(0), false};
             log_panel_->add_log_entry("Create build directory", error_result);
@@ -331,20 +389,48 @@ private:
         auto args = cppcheck_widget_->generate_command_args();
         cppcheck_widget_->set_config(original_config); // Restore original config for UI
         
-        auto result = process_executor.execute("cppcheck", args);
+        // Show progress dialog
+        progress_dialog_->show("Initializing cppcheck analysis...");
+        progress_dialog_->set_cancellable(true);
         
-        // Create log entry
-        std::string command_str = "cppcheck";
-        for (const auto& arg : args) {
-            command_str += " " + arg;
-        }
-        log_panel_->add_log_entry(command_str, result);
+        // Setup async execution config
+        gran_azul::utils::AsyncProcessConfig async_config;
+        async_config.command = "cppcheck";
+        async_config.arguments = args;
+        async_config.working_directory = project_dir.string();
+        async_config.parse_cppcheck_progress = true;
         
-        std::cout << "[GRAN_AZUL] Cppcheck analysis completed with exit code: " << result.exit_code << "\n";
-        std::cout << "[GRAN_AZUL] Output saved to: " << project_config.output_file << "\n";
+        // Setup callbacks
+        async_config.on_progress = [this](float progress, const std::string& status) {
+            progress_dialog_->set_progress(progress, status);
+        };
         
-        // Parse and display analysis results
-        parse_and_display_analysis_results(project_config);
+        async_config.on_output = [this](const std::string& line) {
+            progress_dialog_->add_output_line(line);
+        };
+        
+        async_config.on_completion = [this, project_config, args](const wip::utils::process::ProcessResult& result) {
+            std::cout << "[GRAN_AZUL] Background thread completion callback triggered\n";
+            // Store completion data for main thread processing
+            {
+                std::lock_guard<std::mutex> lock(completion_data_mutex_);
+                pending_result_ = result;
+                pending_config_ = project_config;
+                pending_args_ = args;
+            }
+            
+            // Signal completion to main thread
+            std::cout << "[GRAN_AZUL] Setting analysis_completed flag to true\n";
+            analysis_completed_.store(true);
+        };
+        
+        // Setup cancel callback
+        progress_dialog_->set_cancel_callback([this]() {
+            async_executor_->cancel();
+        });
+        
+        // Start async execution
+        auto future = async_executor_->execute_async(async_config);
     }
     
     void generate_comprehensive_report() {

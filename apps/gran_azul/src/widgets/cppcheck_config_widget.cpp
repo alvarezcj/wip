@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <filesystem>
+#include <algorithm>
 
 namespace gran_azul::widgets {
 
@@ -41,6 +42,8 @@ void CppcheckConfigWidget::draw() {
     
     // Render all sections
     render_source_config();
+    render_include_paths();
+    render_preprocessor_definitions();
     render_analysis_options();
     render_standards_platform();
     render_performance_settings();
@@ -71,6 +74,193 @@ void CppcheckConfigWidget::render_source_config() {
         
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "Note: Output files will be saved in the project directory");
+    }
+}
+
+void CppcheckConfigWidget::render_include_paths() {
+    if (ImGui::CollapsingHeader("Include Paths", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!has_project_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No project loaded. Please create or open a project.");
+            return;
+        }
+        
+        ImGui::Text("Additional include directories (-I flags):");
+        ImGui::Spacing();
+        
+        // Display existing include paths
+        for (size_t i = 0; i < config_.include_paths.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            
+            // Show the include path
+            ImGui::Text("[%zu] %s", i + 1, config_.include_paths[i].c_str());
+            ImGui::SameLine();
+            
+            // Remove button
+            if (ImGui::Button("Remove")) {
+                config_.include_paths.erase(config_.include_paths.begin() + i);
+                ImGui::PopID();
+                break; // Exit loop since we modified the vector
+            }
+            
+            ImGui::PopID();
+        }
+        
+        if (config_.include_paths.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No include paths configured");
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Add new include path
+        ImGui::Text("Add new include path:");
+        ImGui::SetNextItemWidth(-80.0f);
+        ImGui::InputText("##new_include_path", new_include_path_, sizeof(new_include_path_));
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Browse...")) {
+            // Use the directory selection callback if available
+            if (on_select_directory_) {
+                std::string selected_path = on_select_directory_();
+                if (!selected_path.empty()) {
+                    std::string relative_path = convert_to_relative_path(selected_path);
+                    strncpy(new_include_path_, relative_path.c_str(), sizeof(new_include_path_) - 1);
+                    new_include_path_[sizeof(new_include_path_) - 1] = '\0';
+                }
+            }
+        }
+        
+        ImGui::SameLine();
+        if (ImGui::Button("Add")) {
+            if (strlen(new_include_path_) > 0) {
+                std::string path_to_add = new_include_path_;
+                
+                // Check for duplicates
+                bool duplicate = false;
+                for (const auto& existing_path : config_.include_paths) {
+                    if (existing_path == path_to_add) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                
+                if (!duplicate) {
+                    config_.include_paths.push_back(path_to_add);
+                    // Clear the input
+                    strcpy(new_include_path_, "");
+                }
+            }
+        }
+        
+        ImGui::Spacing();
+        
+        // Quick add common paths
+        ImGui::Text("Quick add common paths:");
+        if (ImGui::Button("./include")) {
+            if (std::find(config_.include_paths.begin(), config_.include_paths.end(), "./include") == config_.include_paths.end()) {
+                config_.include_paths.push_back("./include");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("./src")) {
+            if (std::find(config_.include_paths.begin(), config_.include_paths.end(), "./src") == config_.include_paths.end()) {
+                config_.include_paths.push_back("./src");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("./third_party")) {
+            if (std::find(config_.include_paths.begin(), config_.include_paths.end(), "./third_party") == config_.include_paths.end()) {
+                config_.include_paths.push_back("./third_party");
+            }
+        }
+    }
+}
+
+void CppcheckConfigWidget::render_preprocessor_definitions() {
+    if (ImGui::CollapsingHeader("Preprocessor Definitions", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!has_project_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No project loaded. Please create or open a project.");
+            return;
+        }
+        
+        ImGui::Text("Preprocessor definitions (-D flags):");
+        ImGui::Spacing();
+        
+        // Display existing definitions
+        for (size_t i = 0; i < config_.preprocessor_definitions.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i) + 1000); // Offset to avoid ID conflicts
+            
+            // Show the definition
+            ImGui::Text("[%zu] %s", i + 1, config_.preprocessor_definitions[i].c_str());
+            ImGui::SameLine();
+            
+            // Remove button
+            if (ImGui::Button("Remove")) {
+                config_.preprocessor_definitions.erase(config_.preprocessor_definitions.begin() + i);
+                ImGui::PopID();
+                break; // Exit loop since we modified the vector
+            }
+            
+            ImGui::PopID();
+        }
+        
+        if (config_.preprocessor_definitions.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No preprocessor definitions configured");
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Add new definition
+        ImGui::Text("Add new definition (e.g., DEBUG=1 or FEATURE_ENABLED):");
+        ImGui::SetNextItemWidth(-80.0f);
+        ImGui::InputText("##new_preprocessor_def", new_preprocessor_def_, sizeof(new_preprocessor_def_));
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Add##add_def")) {
+            if (strlen(new_preprocessor_def_) > 0) {
+                std::string def_to_add = new_preprocessor_def_;
+                
+                // Check for duplicates
+                bool duplicate = false;
+                for (const auto& existing_def : config_.preprocessor_definitions) {
+                    if (existing_def == def_to_add) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                
+                if (!duplicate) {
+                    config_.preprocessor_definitions.push_back(def_to_add);
+                    // Clear the input
+                    strcpy(new_preprocessor_def_, "");
+                }
+            }
+        }
+        
+        ImGui::Spacing();
+        
+        // Quick add common definitions
+        ImGui::Text("Quick add common definitions:");
+        if (ImGui::Button("DEBUG")) {
+            if (std::find(config_.preprocessor_definitions.begin(), config_.preprocessor_definitions.end(), "DEBUG") == config_.preprocessor_definitions.end()) {
+                config_.preprocessor_definitions.push_back("DEBUG");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("NDEBUG")) {
+            if (std::find(config_.preprocessor_definitions.begin(), config_.preprocessor_definitions.end(), "NDEBUG") == config_.preprocessor_definitions.end()) {
+                config_.preprocessor_definitions.push_back("NDEBUG");
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("_GNU_SOURCE")) {
+            if (std::find(config_.preprocessor_definitions.begin(), config_.preprocessor_definitions.end(), "_GNU_SOURCE") == config_.preprocessor_definitions.end()) {
+                config_.preprocessor_definitions.push_back("_GNU_SOURCE");
+            }
+        }
     }
 }
 
@@ -229,6 +419,20 @@ std::string CppcheckConfigWidget::generate_command_preview() const {
         }
     }
     
+    // Include paths
+    for (const auto& include_path : config_.include_paths) {
+        if (!include_path.empty()) {
+            preview += " -I" + include_path;
+        }
+    }
+    
+    // Preprocessor definitions
+    for (const auto& definition : config_.preprocessor_definitions) {
+        if (!definition.empty()) {
+            preview += " -D" + definition;
+        }
+    }
+    
     // Analysis level and options
     if (config_.check_level == 1) {
         preview += " --check-level=exhaustive";
@@ -339,6 +543,20 @@ std::vector<std::string> CppcheckConfigWidget::generate_command_args() const {
         }
         if (!first) {
             args.push_back(enables);
+        }
+    }
+    
+    // Include paths
+    for (const auto& include_path : config_.include_paths) {
+        if (!include_path.empty()) {
+            args.push_back("-I" + include_path);
+        }
+    }
+    
+    // Preprocessor definitions
+    for (const auto& definition : config_.preprocessor_definitions) {
+        if (!definition.empty()) {
+            args.push_back("-D" + definition);
         }
     }
     

@@ -19,6 +19,10 @@ struct CppcheckConfig {
     char output_file[512] = "cppcheck_analysis.xml";
     char build_dir[512] = "";
     
+    // Custom include paths and definitions
+    std::vector<std::string> include_paths;
+    std::vector<std::string> preprocessor_definitions;
+    
     // Analysis options
     bool enable_all = true;
     bool enable_warning = true;
@@ -83,6 +87,10 @@ private:
     std::unique_ptr<PathSelectorWidget> source_path_selector_;
     std::unique_ptr<PathSelectorWidget> build_path_selector_;
     
+    // UI state for advanced configuration
+    char new_include_path_[512] = "";
+    char new_preprocessor_def_[256] = "";
+    
 public:
     CppcheckConfigWidget();
     ~CppcheckConfigWidget(); // Custom destructor needed for unique_ptr with incomplete type
@@ -111,6 +119,8 @@ public:
     
 private:
     void render_source_config();
+    void render_include_paths();
+    void render_preprocessor_definitions();
     void render_analysis_options();
     void render_standards_platform();
     void render_performance_settings();
