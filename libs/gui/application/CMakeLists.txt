@@ -7,11 +7,15 @@ target_sources(wip_gui_application PRIVATE
 target_include_directories(wip_gui_application PUBLIC include)
 target_compile_features(wip_gui_application PUBLIC cxx_std_17)
 
+# Find X11 for ImGui GLFW backend
+find_package(X11 REQUIRED)
+
 # Link required libraries
 target_link_libraries(wip_gui_application PUBLIC 
     wip::gui::window
     wip::utils::event
     imgui::imgui
+    ${X11_LIBRARIES}
 )
 
 # Alias for easier linking

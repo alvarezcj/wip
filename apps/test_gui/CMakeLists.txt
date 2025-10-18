@@ -16,8 +16,10 @@ target_link_libraries(test_gui PRIVATE
 if(UNIX AND NOT APPLE)
     # Linux OpenGL and X11 libraries
     find_package(OpenGL REQUIRED)
+    find_package(X11 REQUIRED)
     target_link_libraries(test_gui PRIVATE
         OpenGL::GL
+        ${X11_LIBRARIES}
         ${CMAKE_DL_LIBS}
         pthread
     )

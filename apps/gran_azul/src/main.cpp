@@ -1088,6 +1088,7 @@ public:
 
 // Application entry point
 int main() {
+    int a = 0;
     try {
         std::cout << "[GRAN_AZUL] Starting Gran Azul Code Quality Analysis Platform...\n";
         

@@ -38,8 +38,4 @@ add_subdirectory(libs/serialization/json_serializer)
 
 # Apps
 add_subdirectory(apps/playground)
-add_subdirectory(apps/test_gui)
-add_subdirectory(apps/application_demo)
-add_subdirectory(apps/window_demo)
-add_subdirectory(apps/desktop_app)
 add_subdirectory(apps/gran_azul)
