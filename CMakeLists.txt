@@ -22,6 +22,7 @@ add_subdirectory(third_party/imgui)
 add_subdirectory(third_party/nativefiledialog-extended)
 
 # wip libraries
+add_subdirectory(libs/analysis)
 add_subdirectory(libs/cli/args)
 add_subdirectory(libs/game/dice)
 add_subdirectory(libs/gui/application)
