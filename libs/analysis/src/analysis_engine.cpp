@@ -6,6 +6,7 @@
 #include <future>
 #include <set>
 #include <filesystem>
+#include <iostream>
 
 namespace wip {
 namespace analysis {
@@ -132,6 +133,7 @@ AnalysisResult AnalysisEngine::analyze_single(const std::string& tool_name, cons
 
 std::vector<AnalysisResult> AnalysisEngine::analyze_multiple(const std::vector<std::string>& tool_names, 
                                                            const AnalysisRequest& request) {
+    std::cout << "[ANALYSIS_ENGINE] analyze_multiple called with " << tool_names.size() << " tools\n";
     validate_tool_names(tool_names);
     
     std::vector<AnalysisResult> results;
@@ -142,12 +144,15 @@ std::vector<AnalysisResult> AnalysisEngine::analyze_multiple(const std::vector<s
     
     try {
         for (const auto& tool_name : tool_names) {
+            std::cout << "[ANALYSIS_ENGINE] Processing tool: " << tool_name << "\n";
             if (cancel_requested_) {
+                std::cout << "[ANALYSIS_ENGINE] Cancel requested, breaking\n";
                 break;
             }
             
             auto tool = get_tool(tool_name);
             if (tool && tool->is_available()) {
+                std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " is available, executing...\n";
                 // Create a tool-specific request with appropriate output file
                 AnalysisRequest tool_request = request;
                 if (!tool_request.output_file.empty()) {
@@ -157,10 +162,13 @@ std::vector<AnalysisResult> AnalysisEngine::analyze_multiple(const std::vector<s
                     tool_request.output_file = base_name + "_" + tool_name + extension;
                 }
                 
+                std::cout << "[ANALYSIS_ENGINE] About to execute tool " << tool_name << " with source: " << tool_request.source_path << "\n";
                 try {
                     auto result = tool->execute(tool_request);
+                    std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " execution completed, success: " << result.success << "\n";
                     results.push_back(std::move(result));
                 } catch (const std::exception& e) {
+                    std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " execution failed: " << e.what() << "\n";
                     // Create error result for failed tool
                     AnalysisResult error_result;
                     error_result.tool_name = tool_name;
@@ -170,9 +178,12 @@ std::vector<AnalysisResult> AnalysisEngine::analyze_multiple(const std::vector<s
                     error_result.error_message = std::string("Tool execution failed: ") + e.what();
                     results.push_back(std::move(error_result));
                 }
+            } else {
+                std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " is not available\n";
             }
         }
         
+        std::cout << "[ANALYSIS_ENGINE] All tools processed, returning " << results.size() << " results\n";
         analysis_running_ = false;
         return results;
     } catch (...) {
@@ -189,7 +200,102 @@ std::future<std::vector<AnalysisResult>> AnalysisEngine::analyze_async(
     
     return std::async(std::launch::async, [this, tool_names, request, progress_callback, completion_callback]() {
         try {
-            auto results = analyze_multiple(tool_names, request);
+            std::cout << "[ANALYSIS_ENGINE] Starting async analysis with progress callbacks\n";
+            
+            validate_tool_names(tool_names);
+            
+            std::vector<AnalysisResult> results;
+            results.reserve(tool_names.size());
+            
+            analysis_running_ = true;
+            cancel_requested_ = false;
+            
+            // Start all tools asynchronously and collect futures
+            std::vector<std::pair<std::string, std::future<AnalysisResult>>> tool_futures;
+            
+            for (const auto& tool_name : tool_names) {
+                std::cout << "[ANALYSIS_ENGINE] Processing tool: " << tool_name << "\n";
+                if (cancel_requested_) {
+                    std::cout << "[ANALYSIS_ENGINE] Cancel requested, breaking\n";
+                    break;
+                }
+                
+                auto tool = get_tool(tool_name);
+                if (tool && tool->is_available()) {
+                    std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " is available, starting async...\n";
+                    
+                    // Create a tool-specific request with appropriate output file
+                    AnalysisRequest tool_request = request;
+                    if (!tool_request.output_file.empty()) {
+                        std::filesystem::path output_path(tool_request.output_file);
+                        std::string base_name = output_path.stem().string();
+                        std::string extension = output_path.extension().string();
+                        tool_request.output_file = base_name + "_" + tool_name + extension;
+                    }
+                    
+                    // Create progress callback wrapper for this specific tool
+                    auto tool_progress_callback = [progress_callback, tool_name](const AnalysisProgress& progress) {
+                        if (progress_callback) {
+                            progress_callback(tool_name, progress);
+                        }
+                    };
+                    
+                    std::cout << "[ANALYSIS_ENGINE] Starting tool " << tool_name << " async with source: " << tool_request.source_path << "\n";
+                    try {
+                        // Start async execution and store future
+                        auto future = tool->execute_async(tool_request, tool_progress_callback);
+                        tool_futures.emplace_back(tool_name, std::move(future));
+                        
+                    } catch (const std::exception& e) {
+                        std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " failed to start: " << e.what() << "\n";
+                        // Create error result for failed tool
+                        AnalysisResult error_result;
+                        error_result.tool_name = tool_name;
+                        error_result.analysis_id = generate_analysis_id();
+                        error_result.timestamp = std::chrono::system_clock::now();
+                        error_result.success = false;
+                        error_result.error_message = std::string("Tool failed to start: ") + e.what();
+                        results.push_back(std::move(error_result));
+                    }
+                } else {
+                    std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " is not available\n";
+                    // Create error result for unavailable tool
+                    AnalysisResult error_result;
+                    error_result.tool_name = tool_name;
+                    error_result.analysis_id = generate_analysis_id();
+                    error_result.timestamp = std::chrono::system_clock::now();
+                    error_result.success = false;
+                    error_result.error_message = "Tool is not available";
+                    results.push_back(std::move(error_result));
+                }
+            }
+            
+            // Wait for all tool executions to complete (truly parallel)
+            std::cout << "[ANALYSIS_ENGINE] Waiting for " << tool_futures.size() << " tools to complete in parallel...\n";
+            
+            // Collect results while maintaining order and handling exceptions
+            results.reserve(tool_futures.size());
+            for (auto& [tool_name, future] : tool_futures) {
+                try {
+                    // Wait for this specific tool (they all run in parallel)
+                    auto result = future.get(); 
+                    std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " completed, success: " << result.success << "\n";
+                    results.push_back(std::move(result));
+                } catch (const std::exception& e) {
+                    std::cout << "[ANALYSIS_ENGINE] Tool " << tool_name << " execution failed: " << e.what() << "\n";
+                    // Create error result for failed tool
+                    AnalysisResult error_result;
+                    error_result.tool_name = tool_name;
+                    error_result.analysis_id = generate_analysis_id();
+                    error_result.timestamp = std::chrono::system_clock::now();
+                    error_result.success = false;
+                    error_result.error_message = std::string("Tool execution failed: ") + e.what();
+                    results.push_back(std::move(error_result));
+                }
+            }
+            
+            analysis_running_ = false;
+            std::cout << "[ANALYSIS_ENGINE] All tools processed async, returning " << results.size() << " results\n";
             
             if (completion_callback) {
                 completion_callback(results);
@@ -197,6 +303,7 @@ std::future<std::vector<AnalysisResult>> AnalysisEngine::analyze_async(
             
             return results;
         } catch (...) {
+            analysis_running_ = false;
             if (completion_callback) {
                 completion_callback({});  // Empty results on error
             }

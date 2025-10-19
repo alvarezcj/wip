@@ -6,6 +6,7 @@
 #include <regex>
 #include <algorithm>
 #include <future>
+#include <thread>
 #include <process.h>
 
 namespace wip {
@@ -197,14 +198,18 @@ std::string CppcheckTool::get_system_requirements() const {
 }
 
 AnalysisResult CppcheckTool::execute(const AnalysisRequest& request) {
+    std::cout << "[CPPCHECK_TOOL] execute() called\n";
     if (!config_) {
+        std::cout << "[CPPCHECK_TOOL] No configuration set!\n";
         throw std::runtime_error("No configuration set for CppcheckTool");
     }
     
     if (!is_available()) {
+        std::cout << "[CPPCHECK_TOOL] Tool not available!\n";
         throw std::runtime_error("Cppcheck is not available on this system");
     }
     
+    std::cout << "[CPPCHECK_TOOL] Tool is available, starting analysis...\n";
     analysis_running_ = true;
     
     AnalysisResult result;
@@ -217,15 +222,24 @@ AnalysisResult CppcheckTool::execute(const AnalysisRequest& request) {
         auto start_time = std::chrono::steady_clock::now();
         
         // Build command line
+        std::cout << "[CPPCHECK_TOOL] Building command line...\n";
         auto command_args = build_command_line(request);
         
+        std::cout << "[CPPCHECK_TOOL] Command: ";
+        for (const auto& arg : command_args) {
+            std::cout << arg << " ";
+        }
+        std::cout << "\n";
+        
         // Execute cppcheck
+        std::cout << "[CPPCHECK_TOOL] About to execute cppcheck...\n";
         wip::utils::process::ProcessExecutor executor;
         wip::utils::process::ProcessResult process_result = executor.execute(
             command_args[0], 
             std::vector<std::string>(command_args.begin() + 1, command_args.end())
         );
         
+        std::cout << "[CPPCHECK_TOOL] Cppcheck execution completed with exit code: " << process_result.exit_code << "\n";
         auto end_time = std::chrono::steady_clock::now();
         result.execution_time = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
         
@@ -254,8 +268,109 @@ std::future<AnalysisResult> CppcheckTool::execute_async(
     std::function<void(const AnalysisProgress&)> progress_callback) {
     
     return std::async(std::launch::async, [this, request, progress_callback]() {
-        return execute(request);
-        // TODO: Implement proper async execution with progress tracking
+        std::cout << "[CPPCHECK_TOOL] Starting async execution with progress callbacks\n";
+        
+        AnalysisResult result;
+        result.tool_name = get_name();
+        result.analysis_id = "async-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        result.timestamp = std::chrono::system_clock::now();
+        
+        if (!is_available()) {
+            result.success = false;
+            result.error_message = "Cppcheck is not available on this system";
+            return result;
+        }
+        
+        auto start_time = std::chrono::steady_clock::now();
+        analysis_running_ = true;
+        
+        try {
+            // Send initial progress
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 0; // We don't know total files yet
+                progress.processed_files = 0;
+                progress.status_message = "Initializing cppcheck analysis...";
+                progress_callback(progress);
+            }
+            
+            auto cppcheck_config = dynamic_cast<CppcheckConfig*>(config_.get());
+            if (!cppcheck_config) {
+                result.success = false;
+                result.error_message = "No cppcheck configuration available";
+                analysis_running_ = false;
+                return result;
+            }
+            
+            // Build command line arguments
+            std::vector<std::string> args = build_command_line(request);
+            
+            // Send progress update
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 0;
+                progress.processed_files = 0;
+                progress.status_message = "Running cppcheck analysis...";
+                progress_callback(progress);
+            }
+            
+            std::cout << "[CPPCHECK_TOOL] Executing cppcheck with progress tracking...\n";
+            
+            // Send initial progress
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 1;
+                progress.processed_files = 0;
+                progress.status_message = "Running cppcheck analysis...";
+                progress_callback(progress);
+            }
+            
+            // Execute the actual cppcheck process
+            wip::utils::process::ProcessExecutor executor;
+            wip::utils::process::ProcessConfig config_process;
+            config_process.command = "cppcheck";
+            config_process.arguments = args;
+            config_process.working_directory = request.source_path;
+            config_process.timeout = std::chrono::minutes(30); // 30 minute timeout
+            
+            auto process_result = executor.execute(config_process);
+            
+            // Send completion progress
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 1; // Completed
+                progress.processed_files = 1;
+                progress.status_message = process_result.success() ? "Cppcheck analysis completed" : "Cppcheck analysis failed";
+                progress_callback(progress);
+            }
+            
+            std::cout << "[CPPCHECK_TOOL] Cppcheck process completed with exit code: " << process_result.exit_code << "\n";
+            
+            auto end_time = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+            
+            if (process_result.success()) {
+                // Parse results from output file
+                auto parsed_result = parse_results_file(request.output_file);
+                
+                result.issues = std::move(parsed_result.issues);
+                result.success = true;
+                result.files_analyzed = parsed_result.files_analyzed;
+                result.execution_time = duration;
+            } else {
+                result.success = false;
+                result.error_message = "Cppcheck execution failed: " + process_result.stderr_output;
+                result.execution_time = duration;
+            }
+            
+        } catch (const std::exception& e) {
+            result.success = false;
+            result.error_message = std::string("Cppcheck execution error: ") + e.what();
+        }
+        
+        analysis_running_ = false;
+        return result;
     });
 }
 

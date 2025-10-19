@@ -279,8 +279,140 @@ std::future<AnalysisResult> ClangTidyTool::execute_async(
     std::function<void(const AnalysisProgress&)> progress_callback) {
     
     return std::async(std::launch::async, [this, request, progress_callback]() {
-        return execute(request);
-        // TODO: Implement proper async execution with progress tracking
+        std::cout << "[CLANG_TIDY_TOOL] Starting async execution with progress callbacks\n";
+        
+        AnalysisResult result;
+        result.tool_name = get_name();
+        result.analysis_id = "async-" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        result.timestamp = std::chrono::system_clock::now();
+        
+        if (!is_available()) {
+            result.success = false;
+            result.error_message = "Clang-Tidy is not available on this system";
+            return result;
+        }
+        
+        auto start_time = std::chrono::steady_clock::now();
+        analysis_running_ = true;
+        
+        try {
+            // Send initial progress
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 0; // We don't know total files yet
+                progress.processed_files = 0;
+                progress.status_message = "Initializing clang-tidy analysis...";
+                progress_callback(progress);
+            }
+            
+            auto clang_tidy_config = dynamic_cast<ClangTidyConfig*>(config_.get());
+            if (!clang_tidy_config) {
+                result.success = false;
+                result.error_message = "No clang-tidy configuration available";
+                analysis_running_ = false;
+                return result;
+            }
+            
+            // Send initial progress
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 1;
+                progress.processed_files = 0;
+                progress.status_message = "Initializing clang-tidy analysis...";
+                progress_callback(progress);
+            }
+            
+            // Build command line arguments  
+            std::vector<std::string> args = build_command_line(request);
+            
+            // Send progress update
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 1;
+                progress.processed_files = 0;
+                progress.status_message = "Running clang-tidy analysis...";
+                progress_callback(progress);
+            }
+            
+            std::cout << "[CLANG_TIDY_TOOL] Executing clang-tidy with progress tracking...\n";
+            
+            // Execute the actual clang-tidy process
+            wip::utils::process::ProcessExecutor executor;
+            wip::utils::process::ProcessConfig config_process;
+            config_process.command = "clang-tidy";
+            config_process.arguments = args;
+            config_process.working_directory = request.source_path;
+            config_process.timeout = std::chrono::minutes(30); // 30 minute timeout
+            
+            auto process_result = executor.execute(config_process);
+            
+            // Write clang-tidy output to the output file (clang-tidy writes to stdout)
+            std::cout << "[CLANG_TIDY_TOOL] Clang-tidy stdout size: " << process_result.stdout_output.size() << " bytes\n";
+            std::cout << "[CLANG_TIDY_TOOL] Clang-tidy stderr: " << process_result.stderr_output << "\n";
+            
+            if (!request.output_file.empty()) {
+                std::cout << "[CLANG_TIDY_TOOL] Writing clang-tidy output to: " << request.output_file << std::endl;
+                std::ofstream output_file(request.output_file);
+                if (output_file) {
+                    if (!process_result.stdout_output.empty()) {
+                        output_file << process_result.stdout_output;
+                    } else {
+                        // Write a minimal output if no stdout (so file parsing doesn't fail)
+                        output_file << "# Clang-tidy analysis completed\n# No issues found or no output generated\n";
+                    }
+                    output_file.close();
+                    std::cout << "[CLANG_TIDY_TOOL] Output file written successfully\n";
+                } else {
+                    std::cout << "[CLANG_TIDY_TOOL] Failed to open output file for writing: " << request.output_file << std::endl;
+                }
+            } else {
+                std::cout << "[CLANG_TIDY_TOOL] No output file specified in request\n";
+            }
+            
+            // Send completion progress
+            if (progress_callback) {
+                AnalysisProgress progress;
+                progress.total_files = 1; // Completed
+                progress.processed_files = 1;
+                progress.status_message = process_result.success() ? "Clang-tidy analysis completed" : "Clang-tidy analysis failed";
+                progress_callback(progress);
+            }
+            
+            std::cout << "[CLANG_TIDY_TOOL] Clang-tidy process completed with exit code: " << process_result.exit_code << "\n";
+            
+            auto end_time = std::chrono::steady_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+            
+            if (process_result.success() || process_result.exit_code == 1) {
+                // Parse results from output file (use request output file, not config default)
+                try {
+                    std::cout << "[CLANG_TIDY_TOOL] Parsing results from: " << request.output_file << std::endl;
+                    auto parsed_result = parse_results_file(request.output_file);
+                    
+                    result.issues = std::move(parsed_result.issues);
+                    result.success = true;
+                    result.files_analyzed = parsed_result.files_analyzed;
+                    result.execution_time = duration;
+                } catch (const std::exception& e) {
+                    std::cout << "[CLANG_TIDY_TOOL] Failed to parse results: " << e.what() << std::endl;
+                    result.success = false;
+                    result.error_message = "Failed to parse clang-tidy results: " + std::string(e.what());
+                    result.execution_time = duration;
+                }
+            } else {
+                result.success = false;
+                result.error_message = "Clang-tidy execution failed with exit code " + std::to_string(process_result.exit_code) + ": " + process_result.stderr_output;
+                result.execution_time = duration;
+            }
+            
+        } catch (const std::exception& e) {
+            result.success = false;
+            result.error_message = std::string("Clang-tidy execution error: ") + e.what();
+        }
+        
+        analysis_running_ = false;
+        return result;
     });
 }
 

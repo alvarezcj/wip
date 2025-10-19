@@ -30,36 +30,55 @@ void ProgressDialog::draw() {
         return;
     }
     
-    // Auto-close after completion if enabled
-    if (is_completed_ && auto_close_on_completion_) {
-        auto now = std::chrono::steady_clock::now();
-        auto time_since_completion = std::chrono::duration_cast<std::chrono::milliseconds>(now - completion_time_);
-        if (time_since_completion.count() > 1500) { // Auto-close after 1.5 seconds
-            std::cout << "[PROGRESS_DIALOG] Auto-closing dialog after completion (waited " 
-                      << time_since_completion.count() << "ms)\n";
-            hide();
-            return;
-        }
-        
-        // Show countdown for user feedback
-        float seconds_remaining = (1500 - time_since_completion.count()) / 1000.0f;
-        if (seconds_remaining > 0) {
-            ImGui::Text("Auto-closing in %.1f seconds...", seconds_remaining);
-        }
+    // Debug: Always log when draw is called for a visible dialog
+    static int draw_count = 0;
+    if (++draw_count % 60 == 0) { // Log every 60 frames (about once per second at 60fps)
+        std::cout << "[PROGRESS_DIALOG] draw() called (frame " << draw_count << "), is_visible=" << is_visible_ 
+                  << ", is_completed=" << is_completed_ << std::endl;
     }
     
-    // Center the dialog on screen
+    // Use a regular window but make it modal-like with proper flags
     ImGuiIO& io = ImGui::GetIO();
+    
+    // Dim the background
+    ImGui::SetNextWindowBgAlpha(0.95f);
+    
+    // Center the window and fix its size to prevent flickering
     ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_Always); // Always set size to prevent flickering
     
-    // Modal dialog flags
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
-    // Note: Removing NoClose flag as it might not be available in this ImGui version
+    // Modal-like flags: no move, no resize, always on top, no collapse
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | 
+                            ImGuiWindowFlags_NoResize | 
+                            ImGuiWindowFlags_NoCollapse |
+                            ImGuiWindowFlags_NoSavedSettings;
     
-    bool show = true;
-    if (ImGui::Begin(title_.c_str(), &show, flags)) {
+    bool window_open = true;
+    if (ImGui::Begin(title_.c_str(), (can_cancel_ || is_completed_) ? &window_open : nullptr, flags)) {
+        
+        // This window is now acting as a modal - no need for capture functions
+        
+        // Auto-close after completion if enabled
+        if (is_completed_ && auto_close_on_completion_) {
+            auto now = std::chrono::steady_clock::now();
+            auto time_since_completion = std::chrono::duration_cast<std::chrono::milliseconds>(now - completion_time_);
+            if (time_since_completion.count() > 2000) { // Auto-close after 2 seconds
+                std::cout << "[PROGRESS_DIALOG] Auto-closing window after completion (waited " 
+                          << time_since_completion.count() << "ms)\n";
+                hide();
+                ImGui::End();
+                return;
+            }
+            
+            // Show countdown for user feedback
+            float seconds_remaining = (2000 - time_since_completion.count()) / 1000.0f;
+            if (seconds_remaining > 0) {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Auto-closing in %.1f seconds...", seconds_remaining);
+                ImGui::Separator();
+            }
+        }
+        
         render_progress_bar();
         render_status_text();
         
@@ -70,11 +89,12 @@ void ProgressDialog::draw() {
         ImGui::Separator();
         
         render_control_buttons();
+        
+        ImGui::End();
     }
-    ImGui::End();
     
-    // Handle dialog close
-    if (!show && (can_cancel_ || is_completed_)) {
+    // Handle window close (user clicked X)
+    if (!window_open && (can_cancel_ || is_completed_)) {
         hide();
     }
 }
@@ -87,6 +107,10 @@ void ProgressDialog::show(const std::string& initial_status) {
     output_text_.clear();
     start_time_ = std::chrono::steady_clock::now();
     last_update_ = start_time_;
+    
+    std::cout << "[PROGRESS_DIALOG] show() called with status: " << initial_status << std::endl;
+    
+    // DON'T open popup here - it must be done in draw() within the same frame
 }
 
 void ProgressDialog::hide() {

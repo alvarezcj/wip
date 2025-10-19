@@ -5,6 +5,7 @@
 #include <process.h>
 #include <widgets.h>
 #include "cppcheck_config_widget.h"
+#include "analysis_manager_widget.h"
 #include "log_window_panel.h"
 #include "analysis_result_panel.h"
 #include "analysis_result.h"
@@ -12,6 +13,9 @@
 #include "utils/async_process_executor.h"
 #include "project_manager.h"
 #include "report_generator.h"
+#include "widgets/project_startup_modal.h"
+#include "analysis_engine.h"
+#include "analysis_types.h"
 #include <nfd.h>
 #include <memory>
 #include <iostream>
@@ -24,6 +28,7 @@
 #include <sstream>
 #include <iomanip>
 #include <cstring>
+#include <future>
 
 using namespace wip::gui::application;
 using namespace wip::gui::window::events;
@@ -103,34 +108,71 @@ private:
     ProcessExecutor process_executor;
     
     // Widgets
-    std::unique_ptr<CppcheckConfigWidget> cppcheck_widget_;
+    std::unique_ptr<CppcheckConfigWidget> cppcheck_widget_; // Keep for backward compatibility during transition
+    std::unique_ptr<gran_azul::widgets::AnalysisManagerWidget> analysis_manager_;
     std::unique_ptr<LogWindowPanel> log_panel_;
     std::unique_ptr<AnalysisResultPanel> analysis_panel_;
     std::unique_ptr<gran_azul::widgets::ProgressDialog> progress_dialog_;
+    std::unique_ptr<gran_azul::widgets::ProjectStartupModal> startup_modal_;
     
     // Async execution
     std::unique_ptr<gran_azul::utils::AsyncProcessExecutor> async_executor_;
     
+    // Analysis engine for real-time analysis
+    std::unique_ptr<wip::analysis::AnalysisEngine> current_analysis_engine_;
+    
     // Analysis completion handling (for thread-safe UI updates)
     std::atomic<bool> analysis_completed_{false};
     std::mutex completion_data_mutex_;
-    wip::utils::process::ProcessResult pending_result_;
-    CppcheckConfig pending_config_;
-    std::vector<std::string> pending_args_;
+    std::vector<wip::analysis::AnalysisResult> pending_results_;
+    std::vector<std::string> pending_tool_names_;
+    gran_azul::widgets::AnalysisResult pending_analysis_result_; // For single analysis results
+    wip::utils::process::ProcessResult pending_result_; // Keep for legacy cppcheck
+    CppcheckConfig pending_config_; // Keep for legacy cppcheck
+    std::vector<std::string> pending_args_; // Keep for legacy cppcheck
+    
+    // Progress handling (for thread-safe UI updates)
+    std::atomic<bool> progress_updated_{false};
+    std::mutex progress_data_mutex_;
+    struct ProgressData {
+        std::string tool_name;
+        float progress_ratio = 0.0f;
+        std::string status_message;
+        std::string current_file;
+    };
+    ProgressData pending_progress_;
+    
+    // Progress update throttling to prevent UI flooding
+    std::chrono::steady_clock::time_point last_progress_update_;
+    static constexpr std::chrono::milliseconds progress_update_interval_{100}; // Max 10 updates per second
+    
+    // Delayed analysis start (to ensure modal renders first)
+    std::atomic<bool> start_analysis_next_frame_{false};
+    std::vector<std::string> pending_analysis_tool_names_;
+    wip::analysis::AnalysisRequest pending_analysis_request_;
+    
+    // Store the analysis future to keep it alive
+    std::future<std::vector<wip::analysis::AnalysisResult>> current_analysis_future_;
     
     // Project management
     std::unique_ptr<gran_azul::ProjectManager> project_manager_;
+    bool project_loaded_ = false;
     
     // Window state
     bool show_cppcheck_config = false;
 
 public:
     GranAzulMainLayer() : Layer("GranAzul") {
+        // Initialize progress update throttling
+        last_progress_update_ = std::chrono::steady_clock::now();
+        
         // Create widgets
-        cppcheck_widget_ = std::make_unique<CppcheckConfigWidget>();
+        cppcheck_widget_ = std::make_unique<CppcheckConfigWidget>(); // Keep for compatibility
+        analysis_manager_ = std::make_unique<gran_azul::widgets::AnalysisManagerWidget>();
         log_panel_ = std::make_unique<LogWindowPanel>();
         analysis_panel_ = std::make_unique<AnalysisResultPanel>("Analysis Results");
         progress_dialog_ = std::make_unique<gran_azul::widgets::ProgressDialog>("Analysis Progress");
+        startup_modal_ = std::make_unique<gran_azul::widgets::ProjectStartupModal>();
         
         // Create async executor
         async_executor_ = std::make_unique<gran_azul::utils::AsyncProcessExecutor>();
@@ -140,6 +182,7 @@ public:
         
         // Setup widget callbacks
         setup_widget_callbacks();
+        setup_startup_modal_callbacks();
     }
 
     void on_attach() override {
@@ -163,6 +206,27 @@ public:
     }
 
     void on_update(Timestep timestep) override {
+        // Debug: Track main thread activity during analysis
+        static auto last_debug = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_debug > std::chrono::seconds(1)) {
+            if (current_analysis_engine_ && current_analysis_engine_->is_analysis_running()) {
+                std::cout << "[GRAN_AZUL] Main thread active during analysis (every 1s debug)\n";
+            }
+            last_debug = now;
+        }
+        
+        // Check for delayed analysis start (to ensure modal renders first)
+        if (start_analysis_next_frame_.load()) {
+            start_pending_analysis();
+        }
+        
+        // Check for progress updates and handle on main thread
+        if (progress_updated_.load()) {
+            handle_progress_update();
+            progress_updated_.store(false);
+        }
+        
         // Check for completed analysis and handle on main thread
         if (analysis_completed_.load()) {
             std::cout << "[GRAN_AZUL] Main thread detected analysis completion\n";
@@ -172,19 +236,29 @@ public:
     }
 
     void on_render(Timestep timestep) override {
+        // Always render the startup modal first if no project is loaded
+        if (!project_loaded_) {
+            if (startup_modal_->render()) {
+                return; // Don't render main UI until project is loaded
+            }
+        }
+        
         // Update widgets
         float delta_time = timestep.seconds();
         
         // Update project status in widgets
         bool has_project = project_manager_->has_project();
-        cppcheck_widget_->set_project_loaded(has_project);
+        cppcheck_widget_->set_project_loaded(has_project); // Keep for compatibility
+        analysis_manager_->set_project_loaded(has_project);
         
         if (has_project) {
             std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
-            cppcheck_widget_->set_project_base_path(project_dir.string());
+            cppcheck_widget_->set_project_base_path(project_dir.string()); // Keep for compatibility
+            analysis_manager_->set_project_base_path(project_dir.string());
         }
         
-        cppcheck_widget_->update(delta_time);
+        cppcheck_widget_->update(delta_time); // Keep for compatibility
+        analysis_manager_->update(delta_time);
         log_panel_->update(delta_time);
         analysis_panel_->update(delta_time);
         progress_dialog_->update(delta_time);
@@ -230,10 +304,15 @@ public:
             analysis_panel_->draw();
         }
         
+        // Analysis manager window
+        if (analysis_manager_->is_visible()) {
+            analysis_manager_->render();
+        }
+        
         // Progress dialog (rendered on top)
         progress_dialog_->draw();
         
-        // Cppcheck configuration window
+        // Cppcheck configuration window (legacy - keep for backward compatibility)
         if (show_cppcheck_config) {
             render_cppcheck_config_window();
         }
@@ -283,7 +362,7 @@ public:
 
 private:
     void setup_widget_callbacks() {
-        // Setup cppcheck widget callbacks
+        // Setup cppcheck widget callbacks (keep for compatibility)
         cppcheck_widget_->set_analysis_callback([this](const CppcheckConfig& config) {
             run_cppcheck_analysis(config);
         });
@@ -300,33 +379,120 @@ private:
             return select_directory_dialog();
         });
         
+        // Setup new analysis manager callbacks
+        analysis_manager_->set_analysis_callback([this](const std::vector<std::string>& tool_names, 
+                                                        const wip::analysis::AnalysisRequest& request) {
+            run_analysis_with_library(tool_names, request);
+        });
+        
+        analysis_manager_->set_version_callback([this](const std::string& tool_name) {
+            check_tool_version(tool_name);
+        });
+        
+        analysis_manager_->set_directory_callback([this]() -> std::string {
+            return select_directory_dialog();
+        });
+        
+        // Setup configuration change callback to auto-save project when user changes settings
+        analysis_manager_->set_configuration_changed_callback([this]() {
+            sync_project_from_ui();
+            save_project();
+        });
+        
         // Setup analysis result panel callbacks
         analysis_panel_->set_file_open_callback([this](const std::string& file_path, int line, int column) {
             open_file_at_location(file_path, line, column);
         });
     }
     
+    void setup_startup_modal_callbacks() {
+        // Setup startup modal callbacks
+        startup_modal_->set_new_project_callback([this](const std::string& project_name, 
+                                                       const std::string& project_path,
+                                                       const std::string& source_path) {
+            create_new_project(project_name, project_path, source_path);
+        });
+        
+        startup_modal_->set_load_project_callback([this](const std::string& project_file) {
+            load_existing_project(project_file);
+        });
+        
+        startup_modal_->set_exit_callback([this]() {
+            // Signal the application to exit
+            exit(0);
+        });
+    }
+    
+    void handle_progress_update() {
+        std::lock_guard<std::mutex> lock(progress_data_mutex_);
+        
+        // Update progress dialog with thread-safe data
+        if (!pending_progress_.status_message.empty()) {
+            progress_dialog_->set_progress(pending_progress_.progress_ratio, pending_progress_.status_message);
+            
+            // Add output line for file processing
+            if (!pending_progress_.current_file.empty()) {
+                progress_dialog_->add_output_line("[" + pending_progress_.tool_name + "] Processing: " + pending_progress_.current_file);
+            }
+        }
+    }
+    
     void handle_analysis_completion() {
         std::cout << "[GRAN_AZUL] Handling analysis completion on main thread\n";
         std::lock_guard<std::mutex> lock(completion_data_mutex_);
         
-        // Create log entry
-        std::string command_str = "cppcheck";
-        for (const auto& arg : pending_args_) {
-            command_str += " " + arg;
+        // Check if we have a new analysis result from the analysis library
+        if (pending_analysis_result_.analysis_successful || !pending_analysis_result_.error_message.empty()) {
+            std::cout << "[GRAN_AZUL] Processing analysis library result\n";
+            
+            // Update progress dialog
+            progress_dialog_->set_completed(pending_analysis_result_.analysis_successful, 
+                pending_analysis_result_.analysis_successful ? "Analysis completed successfully" : "Analysis completed with errors");
+            
+            // Display results in analysis panel
+            analysis_panel_->set_analysis_result(pending_analysis_result_);
+            
+            // Print summary to console
+            if (pending_analysis_result_.analysis_successful) {
+                std::cout << "[GRAN_AZUL] Analysis Summary:\n";
+                std::cout << "  - Total issues: " << pending_analysis_result_.issues.size() << "\n";
+                std::cout << "  - Errors: " << pending_analysis_result_.count_by_severity(IssueSeverity::ERROR) << "\n";
+                std::cout << "  - Warnings: " << pending_analysis_result_.count_by_severity(IssueSeverity::WARNING) << "\n";
+                std::cout << "  - Style issues: " << pending_analysis_result_.count_by_severity(IssueSeverity::STYLE) << "\n";
+                std::cout << "  - Performance issues: " << pending_analysis_result_.count_by_severity(IssueSeverity::PERFORMANCE) << "\n";
+            } else {
+                std::cout << "[GRAN_AZUL] Analysis failed: " << pending_analysis_result_.error_message << "\n";
+            }
+            
+            // Clear the result
+            pending_analysis_result_ = gran_azul::widgets::AnalysisResult{};
+        } 
+        // Fallback to legacy cppcheck handling
+        else if (pending_result_.exit_code != -1) {
+            std::cout << "[GRAN_AZUL] Processing legacy cppcheck result\n";
+            
+            // Create log entry
+            std::string command_str = "cppcheck";
+            for (const auto& arg : pending_args_) {
+                command_str += " " + arg;
+            }
+            log_panel_->add_log_entry(command_str, pending_result_);
+            
+            std::cout << "[GRAN_AZUL] Cppcheck analysis completed with exit code: " << pending_result_.exit_code << "\n";
+            std::cout << "[GRAN_AZUL] Output saved to: " << pending_config_.output_file << "\n";
+            
+            // Update progress dialog
+            std::cout << "[GRAN_AZUL] Setting progress dialog as completed\n";
+            progress_dialog_->set_completed(pending_result_.success(), 
+                pending_result_.success() ? "Analysis completed successfully" : "Analysis completed with errors");
+            
+            // Parse and display analysis results
+            parse_and_display_analysis_results(pending_config_);
+            
+            // Clear the result
+            pending_result_ = wip::utils::process::ProcessResult{};
         }
-        log_panel_->add_log_entry(command_str, pending_result_);
         
-        std::cout << "[GRAN_AZUL] Cppcheck analysis completed with exit code: " << pending_result_.exit_code << "\n";
-        std::cout << "[GRAN_AZUL] Output saved to: " << pending_config_.output_file << "\n";
-        
-        // Update progress dialog
-        std::cout << "[GRAN_AZUL] Setting progress dialog as completed\n";
-        progress_dialog_->set_completed(pending_result_.success(), 
-            pending_result_.success() ? "Analysis completed successfully" : "Analysis completed with errors");
-        
-        // Parse and display analysis results
-        parse_and_display_analysis_results(pending_config_);
         std::cout << "[GRAN_AZUL] Analysis completion handling finished\n";
     }
     
@@ -561,6 +727,346 @@ private:
         log_panel_->add_log_entry("mkdir -p " + std::string(config.build_dir), result);
     }
     
+    // Helper function to convert analysis library result to widget result
+    gran_azul::widgets::AnalysisResult convert_analysis_result(const wip::analysis::AnalysisResult& lib_result) {
+        gran_azul::widgets::AnalysisResult widget_result;
+        
+        // Copy basic fields
+        widget_result.analysis_successful = lib_result.success;
+        widget_result.error_message = lib_result.error_message;
+        widget_result.source_path = ""; // Not directly available in lib result
+        widget_result.total_files_analyzed = static_cast<int>(lib_result.files_analyzed);
+        
+        // Set timestamp (convert from time_point to string)
+        auto time_t = std::chrono::system_clock::to_time_t(lib_result.timestamp);
+        widget_result.timestamp = std::asctime(std::localtime(&time_t));
+        
+        // Convert issues
+        for (const auto& lib_issue : lib_result.issues) {
+            gran_azul::widgets::AnalysisIssue widget_issue;
+            
+            widget_issue.file = lib_issue.file_path;
+            widget_issue.line = lib_issue.line_number;
+            widget_issue.column = lib_issue.column_number;
+            widget_issue.id = lib_issue.rule_id;
+            widget_issue.message = lib_issue.message;
+            widget_issue.cwe = 0; // Not available in lib result
+            widget_issue.false_positive = false;
+            
+            // Convert severity (different enum values)
+            switch (lib_issue.severity) {
+                case wip::analysis::IssueSeverity::Error:
+                case wip::analysis::IssueSeverity::Critical:
+                    widget_issue.severity = gran_azul::widgets::IssueSeverity::ERROR;
+                    break;
+                case wip::analysis::IssueSeverity::Warning:
+                    widget_issue.severity = gran_azul::widgets::IssueSeverity::WARNING;
+                    break;
+                case wip::analysis::IssueSeverity::Info:
+                default:
+                    // Map based on category for better classification
+                    switch (lib_issue.category) {
+                        case wip::analysis::IssueCategory::Performance:
+                            widget_issue.severity = gran_azul::widgets::IssueSeverity::PERFORMANCE;
+                            break;
+                        case wip::analysis::IssueCategory::Style:
+                            widget_issue.severity = gran_azul::widgets::IssueSeverity::STYLE;
+                            break;
+                        case wip::analysis::IssueCategory::Portability:
+                            widget_issue.severity = gran_azul::widgets::IssueSeverity::PORTABILITY;
+                            break;
+                        default:
+                            widget_issue.severity = gran_azul::widgets::IssueSeverity::INFORMATION;
+                            break;
+                    }
+                    break;
+            }
+            
+            widget_result.issues.push_back(widget_issue);
+        }
+        
+        return widget_result;
+    }
+    
+    // Function to merge multiple analysis results into one
+    gran_azul::widgets::AnalysisResult merge_analysis_results(const std::vector<wip::analysis::AnalysisResult>& results) {
+        gran_azul::widgets::AnalysisResult merged_result;
+        
+        if (results.empty()) {
+            merged_result.analysis_successful = false;
+            merged_result.error_message = "No analysis results returned";
+            return merged_result;
+        }
+        
+        // Start with success - will be false if any tool failed
+        merged_result.analysis_successful = true;
+        merged_result.total_files_analyzed = 0;
+        std::vector<std::string> error_messages;
+        
+        // Get latest timestamp
+        auto latest_timestamp = std::chrono::system_clock::time_point::min();
+        
+        for (const auto& result : results) {
+            // Merge basic info
+            if (!result.success) {
+                merged_result.analysis_successful = false;
+                if (!result.error_message.empty()) {
+                    error_messages.push_back(result.tool_name + ": " + result.error_message);
+                }
+            }
+            
+            merged_result.total_files_analyzed += static_cast<int>(result.files_analyzed);
+            
+            if (result.timestamp > latest_timestamp) {
+                latest_timestamp = result.timestamp;
+            }
+            
+            // Convert and merge issues
+            for (const auto& lib_issue : result.issues) {
+                gran_azul::widgets::AnalysisIssue widget_issue;
+                
+                widget_issue.file = lib_issue.file_path;
+                widget_issue.line = lib_issue.line_number;
+                widget_issue.column = lib_issue.column_number;
+                widget_issue.id = lib_issue.rule_id;
+                widget_issue.message = lib_issue.message;
+                widget_issue.cwe = 0; // Not available in lib result
+                widget_issue.false_positive = false;
+                
+                // Convert severity (different enum values)
+                switch (lib_issue.severity) {
+                    case wip::analysis::IssueSeverity::Error:
+                    case wip::analysis::IssueSeverity::Critical:
+                        widget_issue.severity = gran_azul::widgets::IssueSeverity::ERROR;
+                        break;
+                    case wip::analysis::IssueSeverity::Warning:
+                        widget_issue.severity = gran_azul::widgets::IssueSeverity::WARNING;
+                        break;
+                    case wip::analysis::IssueSeverity::Info:
+                    default:
+                        // Map based on category for better classification
+                        switch (lib_issue.category) {
+                            case wip::analysis::IssueCategory::Performance:
+                                widget_issue.severity = gran_azul::widgets::IssueSeverity::PERFORMANCE;
+                                break;
+                            case wip::analysis::IssueCategory::Style:
+                                widget_issue.severity = gran_azul::widgets::IssueSeverity::STYLE;
+                                break;
+                            case wip::analysis::IssueCategory::Portability:
+                                widget_issue.severity = gran_azul::widgets::IssueSeverity::PORTABILITY;
+                                break;
+                            default:
+                                widget_issue.severity = gran_azul::widgets::IssueSeverity::INFORMATION;
+                                break;
+                        }
+                        break;
+                }
+                
+                merged_result.issues.push_back(widget_issue);
+            }
+        }
+        
+        // Set timestamp (convert from time_point to string)
+        auto time_t = std::chrono::system_clock::to_time_t(latest_timestamp);
+        merged_result.timestamp = std::asctime(std::localtime(&time_t));
+        
+        // Combine error messages
+        if (!error_messages.empty()) {
+            merged_result.error_message = "";
+            for (size_t i = 0; i < error_messages.size(); ++i) {
+                if (i > 0) merged_result.error_message += "; ";
+                merged_result.error_message += error_messages[i];
+            }
+        }
+        
+        return merged_result;
+    }
+    
+    void run_analysis_with_library(const std::vector<std::string>& tool_names, const wip::analysis::AnalysisRequest& request) {
+        std::cout << "[GRAN_AZUL] Starting analysis with library for " << tool_names.size() << " tools\n";
+        std::cout << "[GRAN_AZUL] Tools: ";
+        for (const auto& tool : tool_names) {
+            std::cout << tool << " ";
+        }
+        std::cout << "\n";
+        std::cout << "[GRAN_AZUL] Source path: " << request.source_path << "\n";
+        std::cout << "[GRAN_AZUL] Output file: " << request.output_file << "\n";
+        
+        if (!project_manager_->has_project()) {
+            std::cout << "[GRAN_AZUL] No project loaded - cannot run analysis\n";
+            return;
+        }
+        
+        // Check if already running
+        if (current_analysis_engine_ && current_analysis_engine_->is_analysis_running()) {
+            progress_dialog_->show("Analysis already running...");
+            return;
+        }
+        
+        try {
+            // Get project directory
+            std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
+            std::cout << "[GRAN_AZUL] Project directory: " << project_dir << "\n";
+            
+            // Create analysis engine
+            current_analysis_engine_ = wip::analysis::AnalysisEngineFactory::create_engine_with_tools(tool_names);
+            if (!current_analysis_engine_) {
+                std::cout << "[GRAN_AZUL] Failed to create analysis engine\n";
+                gran_azul::widgets::AnalysisResult error_result;
+                error_result.analysis_successful = false;
+                error_result.error_message = "Failed to create analysis engine";
+                analysis_panel_->set_analysis_result(error_result);
+                return;
+            }
+            
+            std::cout << "[GRAN_AZUL] Analysis engine created with " << current_analysis_engine_->get_registered_tools().size() << " tools\n";
+            
+            // Show progress dialog
+            std::string tools_str = "";
+            for (size_t i = 0; i < tool_names.size(); ++i) {
+                if (i > 0) tools_str += ", ";
+                tools_str += tool_names[i];
+            }
+            progress_dialog_->show("Running " + tools_str + " analysis...");
+            progress_dialog_->set_cancellable(true);
+            
+            // Setup cancel callback for analysis engine
+            progress_dialog_->set_cancel_callback([this]() {
+                if (current_analysis_engine_) {
+                    current_analysis_engine_->cancel_analysis();
+                }
+            });
+            
+            // Force render one frame to ensure modal appears before starting analysis
+            std::cout << "[GRAN_AZUL] Modal shown, will start analysis after UI update...\n";
+            
+            // Store analysis parameters to start in next update cycle
+            pending_analysis_tool_names_ = tool_names;
+            pending_analysis_request_ = request;
+            start_analysis_next_frame_ = true;
+            
+            return; // Exit here, analysis will start in next update cycle
+        } catch (const std::exception& e) {
+            std::cout << "[GRAN_AZUL] Exception starting analysis: " << e.what() << "\n";
+            gran_azul::widgets::AnalysisResult error_result;
+            error_result.analysis_successful = false;
+            error_result.error_message = e.what();
+            analysis_panel_->set_analysis_result(error_result);
+        }
+    }
+    
+    // Helper method to actually start the analysis (called from update loop)
+    void start_pending_analysis() {
+        if (!start_analysis_next_frame_) return;
+        
+        start_analysis_next_frame_ = false;
+        std::cout << "[GRAN_AZUL] Starting delayed analysis with " << pending_analysis_tool_names_.size() << " tools\n";
+        
+        // Run analysis asynchronously with progress callbacks
+        auto progress_callback = [this](const std::string& tool_name, const wip::analysis::AnalysisProgress& progress) {
+            // Rate limit progress updates to prevent UI flooding
+            auto now = std::chrono::steady_clock::now();
+            bool should_update = false;
+            
+            {
+                std::lock_guard<std::mutex> lock(progress_data_mutex_);
+                
+                // Only update if enough time has passed since last update
+                if (now - last_progress_update_ >= progress_update_interval_) {
+                    pending_progress_.tool_name = tool_name;
+                    pending_progress_.progress_ratio = static_cast<float>(progress.get_progress_ratio());
+                    pending_progress_.status_message = progress.status_message;
+                    if (!progress.current_file.empty()) {
+                        pending_progress_.status_message += " (" + progress.current_file + ")";
+                        pending_progress_.current_file = progress.current_file;
+                    } else {
+                        pending_progress_.current_file.clear();
+                    }
+                    
+                    last_progress_update_ = now;
+                    should_update = true;
+                }
+            }
+            
+            // Only signal update if we actually updated the data
+            if (should_update) {
+                progress_updated_.store(true);
+            }
+        };
+        
+        auto completion_callback = [this](const std::vector<wip::analysis::AnalysisResult>& results) {
+            std::cout << "[GRAN_AZUL] Analysis completed with " << results.size() << " results\n";
+            
+            // Store merged results for main thread processing
+            {
+                std::lock_guard<std::mutex> lock(completion_data_mutex_);
+                pending_analysis_result_ = merge_analysis_results(results);
+                
+                std::cout << "[GRAN_AZUL] Merged result with " << pending_analysis_result_.issues.size() << " total issues\n";
+            }
+            
+            // Signal completion
+            analysis_completed_.store(true);
+        };
+        
+        // Start async analysis with callbacks
+        try {
+            current_analysis_future_ = current_analysis_engine_->analyze_async(pending_analysis_tool_names_, pending_analysis_request_, progress_callback, completion_callback);
+            
+            // Future is now stored and will keep the analysis alive
+            std::cout << "[GRAN_AZUL] Analysis future created and stored, analysis running in background\n";
+            
+        } catch (const std::exception& e) {
+            std::cout << "[GRAN_AZUL] Failed to start delayed async analysis: " << e.what() << "\n";
+            
+            // Store error result
+            {
+                std::lock_guard<std::mutex> lock(completion_data_mutex_);
+                pending_analysis_result_ = gran_azul::widgets::AnalysisResult{};
+                pending_analysis_result_.analysis_successful = false;
+                pending_analysis_result_.error_message = e.what();
+            }
+            
+            analysis_completed_.store(true);
+        }
+    }
+    
+    void check_tool_version(const std::string& tool_name) {
+        std::cout << "[GRAN_AZUL] Checking version for: " << tool_name << "\n";
+        
+        try {
+            // Create analysis engine
+            auto engine = wip::analysis::AnalysisEngineFactory::create_engine_with_tools({tool_name});
+            if (!engine) {
+                ProcessResult error_result{127, "", tool_name + " engine not available", std::chrono::milliseconds(0), false};
+                log_panel_->add_log_entry(tool_name + " version check", error_result);
+                return;
+            }
+            
+            // Get the tool and check its version
+            auto* tool = engine->get_tool(tool_name);
+            if (!tool) {
+                ProcessResult error_result{127, "", tool_name + " tool not found in engine", std::chrono::milliseconds(0), false};
+                log_panel_->add_log_entry(tool_name + " version check", error_result);
+                return;
+            }
+            
+            // Get version info
+            std::string version = tool->get_version();
+            
+            // Create mock ProcessResult for compatibility with log panel
+            ProcessResult result{0, version, "", std::chrono::milliseconds(100), true};
+            log_panel_->add_log_entry(tool_name + " --version", result);
+            
+            std::cout << "[GRAN_AZUL] " << tool_name << " version: " << version << "\n";
+            
+        } catch (const std::exception& e) {
+            std::cout << "[GRAN_AZUL] Error checking " << tool_name << " version: " << e.what() << "\n";
+            ProcessResult error_result{1, "", e.what(), std::chrono::milliseconds(0), false};
+            log_panel_->add_log_entry(tool_name + " version check", error_result);
+        }
+    }
+    
     void render_cppcheck_config_window() {
         if (first_frame) {
             ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -776,8 +1282,69 @@ private:
     
     void close_project() {
         project_manager_->close_project();
+        project_loaded_ = false;
         // Reset UI to defaults
         std::cout << "[GRAN_AZUL] Project closed\n";
+    }
+    
+    // New methods for startup modal
+    void create_new_project(const std::string& project_name, 
+                           const std::string& project_path,
+                           const std::string& source_path) {
+        std::cout << "[GRAN_AZUL] Creating new project: " << project_name << "\n";
+        std::cout << "[GRAN_AZUL] Project path: " << project_path << "\n";
+        std::cout << "[GRAN_AZUL] Source path: " << source_path << "\n";
+        
+        try {
+            // Create the project using the project manager
+            if (project_manager_->create_new_project(project_name, project_path)) {
+                // Update the project configuration with the selected source path
+                auto& project = project_manager_->get_current_project_mutable();
+                project.name = project_name;
+                project.root_path = project_path;
+                project.analysis.source_path = source_path;
+                
+                // Set output file relative to project directory
+                std::filesystem::path project_dir(project_path);
+                std::filesystem::path output_file = project_dir / "analysis_results.xml";
+                project.analysis.output_file = output_file.string();
+                
+                // Create the project file
+                std::filesystem::path project_file = project_dir / (project_name + ".granazul");
+                if (project_manager_->save_project_as(project_file.string())) {
+                    project_loaded_ = true;
+                    update_ui_from_project();
+                    std::cout << "[GRAN_AZUL] New project created successfully: " << project_file << "\n";
+                } else {
+                    startup_modal_->show_error("Failed to save project file");
+                    std::cout << "[GRAN_AZUL] Failed to save project file\n";
+                }
+            } else {
+                startup_modal_->show_error("Failed to create project");
+                std::cout << "[GRAN_AZUL] Failed to create project\n";
+            }
+        } catch (const std::exception& e) {
+            startup_modal_->show_error("Error creating project: " + std::string(e.what()));
+            std::cout << "[GRAN_AZUL] Exception creating project: " << e.what() << "\n";
+        }
+    }
+    
+    void load_existing_project(const std::string& project_file) {
+        std::cout << "[GRAN_AZUL] Loading existing project: " << project_file << "\n";
+        
+        try {
+            if (project_manager_->load_project(project_file)) {
+                project_loaded_ = true;
+                update_ui_from_project();
+                std::cout << "[GRAN_AZUL] Project loaded successfully\n";
+            } else {
+                startup_modal_->show_error("Failed to load project file. The file may be corrupted or invalid.");
+                std::cout << "[GRAN_AZUL] Failed to load project file\n";
+            }
+        } catch (const std::exception& e) {
+            startup_modal_->show_error("Error loading project: " + std::string(e.what()));
+            std::cout << "[GRAN_AZUL] Exception loading project: " << e.what() << "\n";
+        }
     }
     
     void update_ui_from_project() {
@@ -819,6 +1386,11 @@ private:
             
             cppcheck_widget_->set_config(cppcheck_config);
             
+            // Update analysis manager from project
+            analysis_manager_->load_from_project_config(project);
+            analysis_manager_->set_project_base_path(std::filesystem::path(project_manager_->get_current_project_path()).parent_path().string());
+            analysis_manager_->set_visible(true); // Show analysis manager when project is loaded
+            
             std::cout << "[GRAN_AZUL] UI updated from project: " << project.name << std::endl;
         }
     }
@@ -826,29 +1398,25 @@ private:
     void sync_project_from_ui() {
         if (project_manager_->has_project()) {
             auto& project = project_manager_->get_current_project_mutable();
+            
+            // Update from the new AnalysisManagerWidget (takes priority)
+            analysis_manager_->save_to_project_config(project);
+            
+            // Legacy support: also sync from old CppcheckWidget if needed
             const auto& cppcheck_config = cppcheck_widget_->get_config();
             
             // Update project analysis settings from UI
             auto& analysis = project.analysis;
-            analysis.source_path = cppcheck_config.source_path;
-            analysis.output_file = cppcheck_config.output_file;
-            analysis.build_dir = cppcheck_config.build_dir;
+            // Note: source_path and basic settings now come from AnalysisManagerWidget above
             
-            analysis.enable_all = cppcheck_config.enable_all;
-            analysis.enable_warning = cppcheck_config.enable_warning;
-            analysis.enable_style = cppcheck_config.enable_style;
-            analysis.enable_performance = cppcheck_config.enable_performance;
-            analysis.enable_portability = cppcheck_config.enable_portability;
-            analysis.enable_information = cppcheck_config.enable_information;
+            analysis.build_dir = cppcheck_config.build_dir;
             analysis.enable_unused_function = cppcheck_config.enable_unused_function;
             analysis.enable_missing_include = cppcheck_config.enable_missing_include;
             
             analysis.check_level = cppcheck_config.check_level;
             analysis.inconclusive = cppcheck_config.inconclusive;
             analysis.verbose = cppcheck_config.verbose;
-            analysis.cpp_standard = cppcheck_config.cpp_standard;
             analysis.platform = cppcheck_config.platform;
-            analysis.job_count = cppcheck_config.job_count;
             analysis.quiet = cppcheck_config.quiet;
             
             analysis.suppress_unused_function = cppcheck_config.suppress_unused_function;
@@ -998,6 +1566,10 @@ private:
             
             if (ImGui::BeginMenu("Analysis")) {
                 bool has_project = project_manager_->has_project();
+                if (ImGui::MenuItem("Analysis Manager", "F6", nullptr, has_project)) {
+                    analysis_manager_->set_visible(true);
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Run Full Analysis", "F5", nullptr, has_project)) {
                     auto& config = cppcheck_widget_->get_config();
                     run_cppcheck_analysis(config);
@@ -1009,7 +1581,7 @@ private:
                 if (ImGui::MenuItem("Select Source Directory", nullptr, nullptr, has_project)) {
                     select_source_directory();
                 }
-                if (ImGui::MenuItem("Configure Cppcheck", nullptr, nullptr, has_project)) {
+                if (ImGui::MenuItem("Configure Cppcheck (Legacy)", nullptr, nullptr, has_project)) {
                     show_cppcheck_config = true;
                 }
                 if (ImGui::MenuItem("Test cppcheck --version")) {
@@ -1031,6 +1603,11 @@ private:
                 bool analysis_visible = analysis_panel_->is_visible();
                 if (ImGui::MenuItem("Analysis Results", nullptr, &analysis_visible)) {
                     analysis_panel_->set_visible(analysis_visible);
+                }
+                
+                bool analysis_manager_visible = analysis_manager_->is_visible();
+                if (ImGui::MenuItem("Analysis Manager", nullptr, &analysis_manager_visible)) {
+                    analysis_manager_->set_visible(analysis_manager_visible);
                 }
                 ImGui::EndMenu();
             }

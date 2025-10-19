@@ -9,6 +9,8 @@ add_executable(gran_azul
     src/widgets/analysis_result_panel.cpp
     src/widgets/path_selector_widget.cpp
     src/widgets/progress_dialog.cpp
+    src/widgets/project_startup_modal.cpp
+    src/widgets/analysis_manager_widget.cpp
     src/utils/async_process_executor.cpp
     src/project/project_config.cpp
     src/project/project_manager.cpp
@@ -22,6 +24,7 @@ target_link_libraries(gran_azul PRIVATE
     wip::utils::process
     wip::gui::widgets
     wip::serialization::json_serializer
+    wip_analysis
     nfd
     OpenGL::GL
     imgui::imgui
@@ -33,6 +36,8 @@ target_include_directories(gran_azul PRIVATE
     src/widgets
     src/project
     src/report
+    ${CMAKE_SOURCE_DIR}/libs/analysis/include
+    ${CMAKE_SOURCE_DIR}/build/_deps/nlohmann_json-src/single_include
 )
 
 # Set output directory
