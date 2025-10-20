@@ -80,7 +80,9 @@ struct AnalysisProgress {
      * @brief Get progress as percentage (0.0 to 1.0)
      */
     double get_progress_ratio() const {
-        return total_files > 0 ? static_cast<double>(processed_files) / total_files : 0.0;
+        if (total_files <= 0) return 0.0;
+        double ratio = static_cast<double>(processed_files) / total_files;
+        return ratio > 1.0 ? 1.0 : ratio;
     }
 };
 

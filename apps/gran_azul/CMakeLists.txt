@@ -24,7 +24,7 @@ target_link_libraries(gran_azul PRIVATE
     wip::utils::process
     wip::gui::widgets
     wip::serialization::json_serializer
-    wip_analysis
+    wip::analysis
     nfd
     OpenGL::GL
     imgui::imgui
