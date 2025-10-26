@@ -31,6 +31,8 @@ private:
     bool auto_scroll_output_;
     char output_filter_[256];
     bool auto_close_on_completion_;
+    bool popup_opened_;
+    bool scroll_to_bottom_;  // Flag to force scroll to bottom
     
     // Timing
     std::chrono::steady_clock::time_point start_time_;

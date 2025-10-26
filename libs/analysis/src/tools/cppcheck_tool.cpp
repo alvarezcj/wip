@@ -265,9 +265,10 @@ AnalysisResult CppcheckTool::execute(const AnalysisRequest& request) {
 
 std::future<AnalysisResult> CppcheckTool::execute_async(
     const AnalysisRequest& request,
-    std::function<void(const AnalysisProgress&)> progress_callback) {
+    std::function<void(const AnalysisProgress&)> progress_callback,
+    std::function<void(const std::string&)> output_callback) {
     
-    return std::async(std::launch::async, [this, request, progress_callback]() {
+    return std::async(std::launch::async, [this, request, progress_callback, output_callback]() {
         std::cout << "[CPPCHECK_TOOL] Starting async execution with progress callbacks\n";
         
         AnalysisResult result;
@@ -335,6 +336,24 @@ std::future<AnalysisResult> CppcheckTool::execute_async(
             config_process.timeout = std::chrono::minutes(30); // 30 minute timeout
             
             auto process_result = executor.execute(config_process);
+            
+            // Send output to callback line by line
+            if (output_callback && !process_result.stdout_output.empty()) {
+                std::istringstream iss(process_result.stdout_output);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    output_callback(line);
+                }
+            }
+            
+            // Also send stderr if available
+            if (output_callback && !process_result.stderr_output.empty()) {
+                std::istringstream iss(process_result.stderr_output);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    output_callback("ERROR: " + line);
+                }
+            }
             
             // Send completion progress
             if (progress_callback) {

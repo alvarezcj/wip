@@ -105,7 +105,8 @@ public:
     AnalysisResult execute(const AnalysisRequest& request) override;
     std::future<AnalysisResult> execute_async(
         const AnalysisRequest& request,
-        std::function<void(const AnalysisProgress&)> progress_callback = nullptr) override;
+        std::function<void(const AnalysisProgress&)> progress_callback = nullptr,
+        std::function<void(const std::string&)> output_callback = nullptr) override;
     bool cancel_analysis() override;
     bool is_analysis_running() const override;
     

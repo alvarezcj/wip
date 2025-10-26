@@ -4,6 +4,7 @@ find_package(X11 REQUIRED)
 add_executable(gran_azul 
     src/main.cpp
     src/widgets/cppcheck_config_widget.cpp
+    src/widgets/analysis_config_widget.cpp
     src/widgets/log_window_panel.cpp
     src/widgets/analysis_result.cpp
     src/widgets/analysis_result_panel.cpp

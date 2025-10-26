@@ -15,7 +15,9 @@ ProgressDialog::ProgressDialog(const std::string& title)
     , can_cancel_(true)
     , is_completed_(false)
     , auto_scroll_output_(true)
-    , auto_close_on_completion_(true)
+    , auto_close_on_completion_(false)
+    , popup_opened_(false)
+    , scroll_to_bottom_(false)
 {
     memset(output_filter_, 0, sizeof(output_filter_));
 }
@@ -27,57 +29,33 @@ void ProgressDialog::update(float delta_time) {
 
 void ProgressDialog::draw() {
     if (!is_visible_) {
+        popup_opened_ = false;  // Reset when not visible
         return;
     }
     
-    // Debug: Always log when draw is called for a visible dialog
-    static int draw_count = 0;
-    if (++draw_count % 60 == 0) { // Log every 60 frames (about once per second at 60fps)
-        std::cout << "[PROGRESS_DIALOG] draw() called (frame " << draw_count << "), is_visible=" << is_visible_ 
-                  << ", is_completed=" << is_completed_ << std::endl;
+    // Open popup modal when first becoming visible
+    if (!popup_opened_) {
+        ImGui::OpenPopup(title_.c_str());
+        popup_opened_ = true;
     }
     
-    // Use a regular window but make it modal-like with proper flags
+    // Center the modal window
     ImGuiIO& io = ImGui::GetIO();
-    
-    // Dim the background
-    ImGui::SetNextWindowBgAlpha(0.95f);
-    
-    // Center the window and fix its size to prevent flickering
     ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_Always); // Always set size to prevent flickering
+    ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_Always);
     
-    // Modal-like flags: no move, no resize, always on top, no collapse
+    // Modal popup flags
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | 
                             ImGuiWindowFlags_NoResize | 
                             ImGuiWindowFlags_NoCollapse |
                             ImGuiWindowFlags_NoSavedSettings;
     
     bool window_open = true;
-    if (ImGui::Begin(title_.c_str(), (can_cancel_ || is_completed_) ? &window_open : nullptr, flags)) {
+    if (ImGui::BeginPopupModal(title_.c_str(), (can_cancel_ || is_completed_) ? &window_open : nullptr, flags)) {
         
         // This window is now acting as a modal - no need for capture functions
         
-        // Auto-close after completion if enabled
-        if (is_completed_ && auto_close_on_completion_) {
-            auto now = std::chrono::steady_clock::now();
-            auto time_since_completion = std::chrono::duration_cast<std::chrono::milliseconds>(now - completion_time_);
-            if (time_since_completion.count() > 2000) { // Auto-close after 2 seconds
-                std::cout << "[PROGRESS_DIALOG] Auto-closing window after completion (waited " 
-                          << time_since_completion.count() << "ms)\n";
-                hide();
-                ImGui::End();
-                return;
-            }
-            
-            // Show countdown for user feedback
-            float seconds_remaining = (2000 - time_since_completion.count()) / 1000.0f;
-            if (seconds_remaining > 0) {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Auto-closing in %.1f seconds...", seconds_remaining);
-                ImGui::Separator();
-            }
-        }
         
         render_progress_bar();
         render_status_text();
@@ -90,11 +68,12 @@ void ProgressDialog::draw() {
         
         render_control_buttons();
         
-        ImGui::End();
+        ImGui::EndPopup();
     }
     
-    // Handle window close (user clicked X)
+    // Handle window close (user clicked X or escape)
     if (!window_open && (can_cancel_ || is_completed_)) {
+        popup_opened_ = false;
         hide();
     }
 }
@@ -107,14 +86,15 @@ void ProgressDialog::show(const std::string& initial_status) {
     output_text_.clear();
     start_time_ = std::chrono::steady_clock::now();
     last_update_ = start_time_;
+    popup_opened_ = false;  // Reset popup state
+    scroll_to_bottom_ = false;  // Reset scroll flag
     
     std::cout << "[PROGRESS_DIALOG] show() called with status: " << initial_status << std::endl;
-    
-    // DON'T open popup here - it must be done in draw() within the same frame
 }
 
 void ProgressDialog::hide() {
     is_visible_ = false;
+    popup_opened_ = false;  // Reset popup state
 }
 
 void ProgressDialog::set_progress(float progress, const std::string& status) {
@@ -126,10 +106,17 @@ void ProgressDialog::set_progress(float progress, const std::string& status) {
 }
 
 void ProgressDialog::add_output_line(const std::string& line) {
+    std::cout << "[PROGRESS_DIALOG] add_output_line called with: '" << line << "'" << std::endl;
+    
     if (!output_text_.empty()) {
         output_text_ += "\n";
     }
     output_text_ += line;
+    
+    // Set flag to scroll to bottom on next render
+    if (auto_scroll_output_) {
+        scroll_to_bottom_ = true;
+    }
     
     // Limit output size to prevent memory issues
     const size_t MAX_OUTPUT_SIZE = 50000; // ~50KB
@@ -225,9 +212,12 @@ void ProgressDialog::render_output_section() {
                 }
             }
             
-            // Auto-scroll to bottom
-            if (auto_scroll_output_ && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                ImGui::SetScrollHereY(1.0f);
+            // Auto-scroll to bottom when new content is added or user is already at bottom
+            if (auto_scroll_output_) {
+                if (scroll_to_bottom_ || ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+                    ImGui::SetScrollHereY(1.0f);
+                    scroll_to_bottom_ = false;  // Reset flag after scrolling
+                }
             }
         }
     }
@@ -277,8 +267,8 @@ void ProgressDialog::render_control_buttons() {
 }
 
 std::string ProgressDialog::format_elapsed_time() const {
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time_);
+    auto end_time = is_completed_ ? completion_time_ : std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time_);
     
     int hours = elapsed.count() / 3600;
     int minutes = (elapsed.count() % 3600) / 60;

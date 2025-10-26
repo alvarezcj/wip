@@ -87,7 +87,8 @@ public:
     
     std::future<AnalysisResult> execute_async(
         const AnalysisRequest& request,
-        std::function<void(const AnalysisProgress&)> progress_callback) override {
+        std::function<void(const AnalysisProgress&)> progress_callback,
+        std::function<void(const std::string&)> output_callback = nullptr) override {
         
         return std::async(std::launch::async, [this, request, progress_callback]() {
             running_ = true;
@@ -341,7 +342,7 @@ TEST_F(AnalysisEngineTest, AsyncAnalysis) {
         completion_results = results;
     };
     
-    auto future = engine_->analyze_async({"tool1", "tool2"}, request, progress_callback, completion_callback);
+    auto future = engine_->analyze_async({"tool1", "tool2"}, request, progress_callback, nullptr, completion_callback);
     auto results = future.get();
     
     // Check results

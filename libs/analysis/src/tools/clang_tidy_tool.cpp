@@ -276,9 +276,10 @@ AnalysisResult ClangTidyTool::execute(const AnalysisRequest& request) {
 
 std::future<AnalysisResult> ClangTidyTool::execute_async(
     const AnalysisRequest& request,
-    std::function<void(const AnalysisProgress&)> progress_callback) {
+    std::function<void(const AnalysisProgress&)> progress_callback,
+    std::function<void(const std::string&)> output_callback) {
     
-    return std::async(std::launch::async, [this, request, progress_callback]() {
+    return std::async(std::launch::async, [this, request, progress_callback, output_callback]() {
         std::cout << "[CLANG_TIDY_TOOL] Starting async execution with progress callbacks\n";
         
         AnalysisResult result;
@@ -350,6 +351,24 @@ std::future<AnalysisResult> ClangTidyTool::execute_async(
             // Write clang-tidy output to the output file (clang-tidy writes to stdout)
             std::cout << "[CLANG_TIDY_TOOL] Clang-tidy stdout size: " << process_result.stdout_output.size() << " bytes\n";
             std::cout << "[CLANG_TIDY_TOOL] Clang-tidy stderr: " << process_result.stderr_output << "\n";
+            
+            // Send output to callback line by line
+            if (output_callback && !process_result.stdout_output.empty()) {
+                std::istringstream iss(process_result.stdout_output);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    output_callback(line);
+                }
+            }
+            
+            // Also send stderr if available
+            if (output_callback && !process_result.stderr_output.empty()) {
+                std::istringstream iss(process_result.stderr_output);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    output_callback("ERROR: " + line);
+                }
+            }
             
             if (!request.output_file.empty()) {
                 std::cout << "[CLANG_TIDY_TOOL] Writing clang-tidy output to: " << request.output_file << std::endl;

@@ -40,7 +40,6 @@ public:
 private:
     bool show_modal_ = true;
     bool show_new_project_form_ = false;
-    bool show_load_project_dialog_ = false;
     
     // New project form data
     char project_name_[256] = "My Code Analysis Project";
@@ -58,7 +57,6 @@ private:
     // Helper methods
     void render_welcome_screen();
     void render_new_project_form();
-    void render_load_project_dialog();
     void render_error_popup();
     
     bool validate_new_project_data();

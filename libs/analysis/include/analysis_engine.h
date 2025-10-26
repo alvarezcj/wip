@@ -30,6 +30,13 @@ public:
     using ProgressCallback = std::function<void(const std::string& tool_name, const AnalysisProgress& progress)>;
     
     /**
+     * @brief Callback for raw output from analysis tools
+     * @param tool_name Name of the tool providing the output
+     * @param output_line Line of output from the tool
+     */
+    using OutputCallback = std::function<void(const std::string& tool_name, const std::string& output_line)>;
+    
+    /**
      * @brief Callback for when analysis completes
      * @param results Vector of results from all tools that ran
      */
@@ -133,6 +140,7 @@ public:
         const std::vector<std::string>& tool_names,
         const AnalysisRequest& request,
         ProgressCallback progress_callback = nullptr,
+        OutputCallback output_callback = nullptr,
         CompletionCallback completion_callback = nullptr);
     
     /**

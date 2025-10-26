@@ -46,7 +46,7 @@ struct CppcheckConfig {
     
     // Performance
     int job_count = 4;
-    bool quiet = true;
+    bool quiet = false;
 
     
     // Suppressions

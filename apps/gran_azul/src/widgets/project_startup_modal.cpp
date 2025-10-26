@@ -66,8 +66,6 @@ bool ProjectStartupModal::render() {
             // Render appropriate content based on current state
             if (show_new_project_form_) {
                 render_new_project_form();
-            } else if (show_load_project_dialog_) {
-                render_load_project_dialog();
             } else {
                 render_welcome_screen();
             }
@@ -120,7 +118,20 @@ void ProjectStartupModal::render_welcome_screen() {
     
     // Load project button
     if (ImGui::Button("Load Existing Project", ImVec2(button_width, 40))) {
-        show_load_project_dialog_ = true;
+        // Directly open file picker instead of showing intermediate dialog
+        nfdchar_t* outPath = nullptr;
+        nfdfilteritem_t filterItem[1] = { { "Gran Azul Project", "granazul" } };
+        
+        nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, nullptr);
+        if (result == NFD_OKAY) {
+            if (on_load_project_) {
+                on_load_project_(std::string(outPath));
+            }
+            NFD_FreePath(outPath);
+            show_modal_ = false;
+        } else if (result != NFD_CANCEL) {
+            show_error("Failed to open file dialog");
+        }
     }
     
     ImGui::Spacing();
@@ -189,40 +200,6 @@ void ProjectStartupModal::render_new_project_form() {
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(120, 0))) {
         show_new_project_form_ = false;
-    }
-}
-
-void ProjectStartupModal::render_load_project_dialog() {
-    ImGui::Text("Load Existing Project");
-    ImGui::Separator();
-    ImGui::Spacing();
-    
-    ImGui::TextWrapped("Click the button below to browse for a Gran Azul project file (.granazul):");
-    
-    ImGui::Spacing();
-    
-    if (ImGui::Button("Browse for Project File", ImVec2(200, 40))) {
-        nfdchar_t* outPath = nullptr;
-        nfdfilteritem_t filterItem[1] = { { "Gran Azul Project", "granazul" } };
-        
-        nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, nullptr);
-        if (result == NFD_OKAY) {
-            if (on_load_project_) {
-                on_load_project_(std::string(outPath));
-            }
-            NFD_FreePath(outPath);
-            show_modal_ = false;
-        } else if (result != NFD_CANCEL) {
-            show_error("Failed to open file dialog");
-        }
-    }
-    
-    ImGui::Spacing();
-    ImGui::Separator();
-    
-    // Back button
-    if (ImGui::Button("Back", ImVec2(120, 0))) {
-        show_load_project_dialog_ = false;
     }
 }
 

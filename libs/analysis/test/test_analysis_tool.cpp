@@ -100,9 +100,10 @@ public:
     
     std::future<AnalysisResult> execute_async(
         const AnalysisRequest& request,
-        std::function<void(const AnalysisProgress&)> progress_callback = nullptr) override {
+        std::function<void(const AnalysisProgress&)> progress_callback = nullptr,
+        std::function<void(const std::string&)> output_callback = nullptr) override {
         
-        return std::async(std::launch::async, [this, request, progress_callback]() {
+        return std::async(std::launch::async, [this, request, progress_callback, output_callback]() {
             running_ = true;
             
             // Send initial progress
@@ -114,6 +115,13 @@ public:
                 progress_callback(progress);
             }
             
+            // Send some test output
+            if (output_callback) {
+                output_callback("Mock analysis starting...");
+                output_callback("Analyzing file1.cpp");
+                output_callback("Found issue in file1.cpp:10");
+            }
+            
             // Simulate file processing with progress updates
             for (int i = 0; i <= 5; ++i) {
                 if (progress_callback) {
@@ -123,6 +131,10 @@ public:
                     progress.current_file = i < 5 ? ("file" + std::to_string(i) + ".cpp") : "";
                     progress.status_message = i < 5 ? "Processing..." : "Finalizing...";
                     progress_callback(progress);
+                }
+                
+                if (output_callback && i < 5) {
+                    output_callback("Processing file" + std::to_string(i) + ".cpp");
                 }
                 
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));

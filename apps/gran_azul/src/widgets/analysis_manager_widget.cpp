@@ -374,14 +374,14 @@ void AnalysisManagerWidget::load_from_project_config(const ProjectConfig& config
     output_directory_[sizeof(output_directory_) - 1] = '\0';
     
     // Load cppcheck settings
-    cppcheck_enable_all_ = config.analysis.enable_all;
-    cppcheck_enable_warning_ = config.analysis.enable_warning;
-    cppcheck_enable_style_ = config.analysis.enable_style;
-    cppcheck_enable_performance_ = config.analysis.enable_performance;
-    cppcheck_enable_portability_ = config.analysis.enable_portability;
-    cppcheck_enable_information_ = config.analysis.enable_information;
+    cppcheck_enable_all_ = config.analysis.cppcheck.enable_all;
+    cppcheck_enable_warning_ = config.analysis.cppcheck.enable_warning;
+    cppcheck_enable_style_ = config.analysis.cppcheck.enable_style;
+    cppcheck_enable_performance_ = config.analysis.cppcheck.enable_performance;
+    cppcheck_enable_portability_ = config.analysis.cppcheck.enable_portability;
+    cppcheck_enable_information_ = config.analysis.cppcheck.enable_information;
     cppcheck_cpp_standard_ = config.analysis.cpp_standard;
-    cppcheck_job_count_ = config.analysis.job_count;
+    cppcheck_job_count_ = config.analysis.cppcheck.job_count;
 }
 
 void AnalysisManagerWidget::save_to_project_config(ProjectConfig& config) const {
@@ -390,14 +390,14 @@ void AnalysisManagerWidget::save_to_project_config(ProjectConfig& config) const 
     config.analysis.output_file = (std::filesystem::path(output_directory_) / "analysis_results.xml").string();
     
     // Save cppcheck settings
-    config.analysis.enable_all = cppcheck_enable_all_;
-    config.analysis.enable_warning = cppcheck_enable_warning_;
-    config.analysis.enable_style = cppcheck_enable_style_;
-    config.analysis.enable_performance = cppcheck_enable_performance_;
-    config.analysis.enable_portability = cppcheck_enable_portability_;
-    config.analysis.enable_information = cppcheck_enable_information_;
+    config.analysis.cppcheck.enable_all = cppcheck_enable_all_;
+    config.analysis.cppcheck.enable_warning = cppcheck_enable_warning_;
+    config.analysis.cppcheck.enable_style = cppcheck_enable_style_;
+    config.analysis.cppcheck.enable_performance = cppcheck_enable_performance_;
+    config.analysis.cppcheck.enable_portability = cppcheck_enable_portability_;
+    config.analysis.cppcheck.enable_information = cppcheck_enable_information_;
     config.analysis.cpp_standard = cppcheck_cpp_standard_;
-    config.analysis.job_count = cppcheck_job_count_;
+    config.analysis.cppcheck.job_count = cppcheck_job_count_;
 }
 
 bool AnalysisManagerWidget::has_available_tools() const {

@@ -49,8 +49,9 @@ std::future<wip::utils::process::ProcessResult> AsyncProcessExecutor::execute_as
     result_promise_ = std::promise<wip::utils::process::ProcessResult>();
     auto future = result_promise_.get_future();
     
-    // Start worker thread
+    // Start background thread
     worker_thread_ = std::thread([this, config]() {
+        std::cout << "[ASYNC_EXECUTOR] Starting worker thread for command: " << config.command << std::endl;
         execute_with_realtime_output(config);
     });
     
@@ -145,6 +146,15 @@ void AsyncProcessExecutor::parse_cppcheck_output(const std::string& line, const 
 }
 
 void AsyncProcessExecutor::execute_with_realtime_output(const AsyncProcessConfig& config) {
+    std::cout << "[ASYNC_EXECUTOR] execute_with_realtime_output called" << std::endl;
+    std::cout << "[ASYNC_EXECUTOR] Command: " << config.command << std::endl;
+    std::cout << "[ASYNC_EXECUTOR] Working dir: " << config.working_directory << std::endl;
+    std::cout << "[ASYNC_EXECUTOR] Arguments: ";
+    for (const auto& arg : config.arguments) {
+        std::cout << "'" << arg << "' ";
+    }
+    std::cout << std::endl;
+    
     try {
         #ifdef _WIN32
         execute_windows(config);
@@ -173,6 +183,7 @@ void AsyncProcessExecutor::execute_with_realtime_output(const AsyncProcessConfig
 
 #ifndef _WIN32
 void AsyncProcessExecutor::execute_unix(const AsyncProcessConfig& config) {
+    std::cout << "[ASYNC_EXECUTOR] execute_unix called" << std::endl;
     auto start_time = std::chrono::steady_clock::now();
     
     // Build command string
@@ -180,6 +191,7 @@ void AsyncProcessExecutor::execute_unix(const AsyncProcessConfig& config) {
     for (const auto& arg : config.arguments) {
         full_command += " " + arg;
     }
+    std::cout << "[ASYNC_EXECUTOR] Full command: " << full_command << std::endl;
     
     // Create pipes for stdout and stderr
     int stdout_pipe[2];
@@ -268,6 +280,8 @@ void AsyncProcessExecutor::execute_unix(const AsyncProcessConfig& config) {
                             
                             stdout_output += line + "\n";
                             
+                            std::cout << "[ASYNC_EXECUTOR] Read stdout line: '" << line << "'" << std::endl;
+                            
                             if (config.on_output) {
                                 config.on_output(line);
                             }
@@ -294,6 +308,8 @@ void AsyncProcessExecutor::execute_unix(const AsyncProcessConfig& config) {
                             stderr_buffer.erase(0, pos + 1);
                             
                             stderr_output += line + "\n";
+                            
+                            std::cout << "[ASYNC_EXECUTOR] Read stderr line: '" << line << "'" << std::endl;
                             
                             if (config.on_output) {
                                 config.on_output("ERROR: " + line);

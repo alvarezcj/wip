@@ -106,13 +106,15 @@ public:
     
     /**
      * @brief Execute analysis asynchronously
-     * @param request Analysis request parameters
+     * @param request Analysis parameters and configuration
      * @param progress_callback Called periodically with progress updates
+     * @param output_callback Called with raw output lines from the tool
      * @return Future that will contain the analysis result
      */
     virtual std::future<AnalysisResult> execute_async(
         const AnalysisRequest& request,
-        std::function<void(const AnalysisProgress&)> progress_callback = nullptr) = 0;
+        std::function<void(const AnalysisProgress&)> progress_callback = nullptr,
+        std::function<void(const std::string&)> output_callback = nullptr) = 0;
     
     /**
      * @brief Cancel a running analysis (if supported)

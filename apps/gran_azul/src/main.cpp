@@ -4,7 +4,7 @@
 #include <GL/gl.h>
 #include <process.h>
 #include <widgets.h>
-#include "cppcheck_config_widget.h"
+#include "analysis_config_widget.h"
 #include "analysis_manager_widget.h"
 #include "log_window_panel.h"
 #include "analysis_result_panel.h"
@@ -108,7 +108,7 @@ private:
     ProcessExecutor process_executor;
     
     // Widgets
-    std::unique_ptr<CppcheckConfigWidget> cppcheck_widget_; // Keep for backward compatibility during transition
+    std::unique_ptr<AnalysisConfigWidget> analysis_config_widget_;
     std::unique_ptr<gran_azul::widgets::AnalysisManagerWidget> analysis_manager_;
     std::unique_ptr<LogWindowPanel> log_panel_;
     std::unique_ptr<AnalysisResultPanel> analysis_panel_;
@@ -128,7 +128,7 @@ private:
     std::vector<std::string> pending_tool_names_;
     gran_azul::widgets::AnalysisResult pending_analysis_result_; // For single analysis results
     wip::utils::process::ProcessResult pending_result_; // Keep for legacy cppcheck
-    CppcheckConfig pending_config_; // Keep for legacy cppcheck
+    // Remove: CppcheckConfig pending_config_; // No longer needed
     std::vector<std::string> pending_args_; // Keep for legacy cppcheck
     
     // Progress handling (for thread-safe UI updates)
@@ -159,7 +159,7 @@ private:
     bool project_loaded_ = false;
     
     // Window state
-    bool show_cppcheck_config = false;
+    bool show_analysis_config = false;
 
 public:
     GranAzulMainLayer() : Layer("GranAzul") {
@@ -167,7 +167,7 @@ public:
         last_progress_update_ = std::chrono::steady_clock::now();
         
         // Create widgets
-        cppcheck_widget_ = std::make_unique<CppcheckConfigWidget>(); // Keep for compatibility
+        analysis_config_widget_ = std::make_unique<AnalysisConfigWidget>();
         analysis_manager_ = std::make_unique<gran_azul::widgets::AnalysisManagerWidget>();
         log_panel_ = std::make_unique<LogWindowPanel>();
         analysis_panel_ = std::make_unique<AnalysisResultPanel>("Analysis Results");
@@ -248,16 +248,16 @@ public:
         
         // Update project status in widgets
         bool has_project = project_manager_->has_project();
-        cppcheck_widget_->set_project_loaded(has_project); // Keep for compatibility
+        // cppcheck_widget_->set_project_loaded(has_project); // REMOVED: Legacy widget
         analysis_manager_->set_project_loaded(has_project);
         
         if (has_project) {
             std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
-            cppcheck_widget_->set_project_base_path(project_dir.string()); // Keep for compatibility
+            // cppcheck_widget_->set_project_base_path(project_dir.string()); // REMOVED: Legacy widget
             analysis_manager_->set_project_base_path(project_dir.string());
         }
         
-        cppcheck_widget_->update(delta_time); // Keep for compatibility
+        // cppcheck_widget_->update(delta_time); // REMOVED: Legacy widget
         analysis_manager_->update(delta_time);
         log_panel_->update(delta_time);
         analysis_panel_->update(delta_time);
@@ -313,8 +313,8 @@ public:
         progress_dialog_->draw();
         
         // Cppcheck configuration window (legacy - keep for backward compatibility)
-        if (show_cppcheck_config) {
-            render_cppcheck_config_window();
+        if (show_analysis_config) {
+            render_analysis_config_window();
         }
         
         // Mark first frame as complete
@@ -335,8 +335,21 @@ public:
                     case GLFW_KEY_F5:
                         if (project_manager_->has_project()) {
                             std::cout << "[GRAN_AZUL] F5 pressed - Run analysis\n";
-                            auto& config = cppcheck_widget_->get_config();
-                            run_cppcheck_analysis(config);
+                            // Run unified analysis with project configuration
+                            const auto& project_config = project_manager_->get_current_project();
+                            wip::analysis::AnalysisRequest request;
+                            request.source_path = project_config.analysis.source_path;
+                            request.output_file = "analysis_results.xml";
+                            
+                            std::vector<std::string> tool_names;
+                            if (project_config.analysis.enable_cppcheck) tool_names.push_back("cppcheck");
+                            if (project_config.analysis.enable_clang_tidy) tool_names.push_back("clang-tidy");
+                            
+                            if (!tool_names.empty()) {
+                                run_analysis_with_library(tool_names, request);
+                            } else {
+                                std::cout << "[GRAN_AZUL] No analysis tools enabled in project configuration\n";
+                            }
                         } else {
                             std::cout << "[GRAN_AZUL] F5 pressed - No project loaded\n";
                         }
@@ -362,23 +375,6 @@ public:
 
 private:
     void setup_widget_callbacks() {
-        // Setup cppcheck widget callbacks (keep for compatibility)
-        cppcheck_widget_->set_analysis_callback([this](const CppcheckConfig& config) {
-            run_cppcheck_analysis(config);
-        });
-        
-        cppcheck_widget_->set_version_callback([this]() {
-            run_cppcheck_version();
-        });
-        
-        cppcheck_widget_->set_directory_callback([this](const CppcheckConfig& config) {
-            create_build_directory(config);
-        });
-        
-        cppcheck_widget_->set_directory_selection_callback([this]() -> std::string {
-            return select_directory_dialog();
-        });
-        
         // Setup new analysis manager callbacks
         analysis_manager_->set_analysis_callback([this](const std::vector<std::string>& tool_names, 
                                                         const wip::analysis::AnalysisRequest& request) {
@@ -479,7 +475,7 @@ private:
             log_panel_->add_log_entry(command_str, pending_result_);
             
             std::cout << "[GRAN_AZUL] Cppcheck analysis completed with exit code: " << pending_result_.exit_code << "\n";
-            std::cout << "[GRAN_AZUL] Output saved to: " << pending_config_.output_file << "\n";
+            // std::cout << "[GRAN_AZUL] Output saved to: " << pending_config_.output_file << "\n"; // REMOVED: Legacy
             
             // Update progress dialog
             std::cout << "[GRAN_AZUL] Setting progress dialog as completed\n";
@@ -487,7 +483,7 @@ private:
                 pending_result_.success() ? "Analysis completed successfully" : "Analysis completed with errors");
             
             // Parse and display analysis results
-            parse_and_display_analysis_results(pending_config_);
+            // parse_and_display_analysis_results(pending_config_); // REMOVED: Legacy method
             
             // Clear the result
             pending_result_ = wip::utils::process::ProcessResult{};
@@ -496,108 +492,8 @@ private:
         std::cout << "[GRAN_AZUL] Analysis completion handling finished\n";
     }
     
-    void run_cppcheck_analysis(const CppcheckConfig& config) {
-        std::cout << "[GRAN_AZUL] Starting async cppcheck analysis\n";
-        
-        if (!project_manager_->has_project()) {
-            std::cout << "[GRAN_AZUL] No project loaded - cannot run analysis\n";
-            return;
-        }
-
-        if (!ProcessExecutor::command_exists("cppcheck")) {
-            ProcessResult error_result{127, "", "cppcheck command not found", std::chrono::milliseconds(0), false};
-            log_panel_->add_log_entry("cppcheck analysis", error_result);
-            
-            // Show error in analysis panel
-            AnalysisResult error_analysis_result;
-            error_analysis_result.analysis_successful = false;
-            error_analysis_result.error_message = "cppcheck command not found";
-            analysis_panel_->set_analysis_result(error_analysis_result);
-            return;
-        }
-
-        // If already running, show progress dialog
-        if (async_executor_->is_running()) {
-            progress_dialog_->show("Analysis already running...");
-            return;
-        }
-
-        // Create a copy of config and modify output file to use project directory
-        CppcheckConfig project_config = config;
-        std::filesystem::path project_dir = std::filesystem::path(project_manager_->get_current_project_path()).parent_path();
-        std::filesystem::path output_file = project_dir / "cppcheck_analysis.xml";
-        strncpy(project_config.output_file, output_file.string().c_str(), sizeof(project_config.output_file) - 1);
-        project_config.output_file[sizeof(project_config.output_file) - 1] = '\0';
-        
-        // Always create standardized build directory at .azul-cache/cppcheck-build
-        std::filesystem::path azul_cache_dir = project_dir / ".azul-cache";
-        std::filesystem::path build_dir_path = azul_cache_dir / "cppcheck-build";
-        
-        std::cout << "[GRAN_AZUL] Using standardized build directory: " << build_dir_path << "\n";
-        
-        // Create the cache and build directories
-        std::error_code ec;
-        std::filesystem::create_directories(build_dir_path, ec);
-        if (ec) {
-            std::cout << "[GRAN_AZUL] Failed to create build directory: " << ec.message() << "\n";
-            ProcessResult error_result{1, "", "Failed to create build directory: " + ec.message(), std::chrono::milliseconds(0), false};
-            log_panel_->add_log_entry("Create build directory", error_result);
-            return;
-        }
-        
-        // Update the config to use our standardized build directory
-        strncpy(project_config.build_dir, build_dir_path.string().c_str(), sizeof(project_config.build_dir) - 1);
-        project_config.build_dir[sizeof(project_config.build_dir) - 1] = '\0';
-        
-        // Generate command args with project-based output
-        auto original_config = cppcheck_widget_->get_config();
-        cppcheck_widget_->set_config(project_config);
-        auto args = cppcheck_widget_->generate_command_args();
-        cppcheck_widget_->set_config(original_config); // Restore original config for UI
-        
-        // Show progress dialog
-        progress_dialog_->show("Initializing cppcheck analysis...");
-        progress_dialog_->set_cancellable(true);
-        
-        // Setup async execution config
-        gran_azul::utils::AsyncProcessConfig async_config;
-        async_config.command = "cppcheck";
-        async_config.arguments = args;
-        async_config.working_directory = project_dir.string();
-        async_config.parse_cppcheck_progress = true;
-        
-        // Setup callbacks
-        async_config.on_progress = [this](float progress, const std::string& status) {
-            progress_dialog_->set_progress(progress, status);
-        };
-        
-        async_config.on_output = [this](const std::string& line) {
-            progress_dialog_->add_output_line(line);
-        };
-        
-        async_config.on_completion = [this, project_config, args](const wip::utils::process::ProcessResult& result) {
-            std::cout << "[GRAN_AZUL] Background thread completion callback triggered\n";
-            // Store completion data for main thread processing
-            {
-                std::lock_guard<std::mutex> lock(completion_data_mutex_);
-                pending_result_ = result;
-                pending_config_ = project_config;
-                pending_args_ = args;
-            }
-            
-            // Signal completion to main thread
-            std::cout << "[GRAN_AZUL] Setting analysis_completed flag to true\n";
-            analysis_completed_.store(true);
-        };
-        
-        // Setup cancel callback
-        progress_dialog_->set_cancel_callback([this]() {
-            async_executor_->cancel();
-        });
-        
-        // Start async execution
-        auto future = async_executor_->execute_async(async_config);
-    }
+    // REMOVED: Legacy cppcheck methods
+    // REMOVED: Legacy run_cppcheck_analysis method
     
     void generate_comprehensive_report() {
         if (!project_manager_->has_project()) {
@@ -611,8 +507,10 @@ private:
         // Analyze project structure
         const auto& project_config = project_manager_->get_current_project();
         std::vector<std::string> source_paths;
-        if (strlen(cppcheck_widget_->get_config().source_path) > 0) {
-            std::filesystem::path abs_source = project_dir / cppcheck_widget_->get_config().source_path;
+        
+        // Use project's source path for analysis
+        if (!project_config.analysis.source_path.empty()) {
+            std::filesystem::path abs_source = project_dir / project_config.analysis.source_path;
             source_paths.push_back(abs_source.string());
         }
         
@@ -655,39 +553,7 @@ private:
         }
     }
     
-    void parse_and_display_analysis_results(const CppcheckConfig& config) {
-        AnalysisResult analysis_result;
-        
-        // Set analysis metadata
-        analysis_result.source_path = config.source_path;
-        
-        // Try to parse the analysis file
-        bool parse_success = analysis_parser::parse_analysis_file(config.output_file, analysis_result);
-        
-        if (parse_success || analysis_result.issues.empty()) {
-            // Even if no issues found, mark as successful
-            analysis_result.analysis_successful = true;
-            std::cout << "[GRAN_AZUL] Analysis results parsed successfully: " 
-                      << analysis_result.issues.size() << " issues found\n";
-        } else {
-            std::cout << "[GRAN_AZUL] Failed to parse analysis results from: " << config.output_file << "\n";
-            analysis_result.analysis_successful = false;
-            analysis_result.error_message = "Failed to parse analysis output file";
-        }
-        
-        // Display results in analysis panel
-        analysis_panel_->set_analysis_result(analysis_result);
-        
-        // Print summary to console
-        if (analysis_result.analysis_successful) {
-            std::cout << "[GRAN_AZUL] Analysis Summary:\n";
-            std::cout << "  - Total issues: " << analysis_result.issues.size() << "\n";
-            std::cout << "  - Errors: " << analysis_result.count_by_severity(IssueSeverity::ERROR) << "\n";
-            std::cout << "  - Warnings: " << analysis_result.count_by_severity(IssueSeverity::WARNING) << "\n";
-            std::cout << "  - Style issues: " << analysis_result.count_by_severity(IssueSeverity::STYLE) << "\n";
-            std::cout << "  - Performance issues: " << analysis_result.count_by_severity(IssueSeverity::PERFORMANCE) << "\n";
-        }
-    }
+    // REMOVED: Legacy parse_and_display_analysis_results method
     
     void open_file_at_location(const std::string& file_path, int line, int column) {
         std::cout << "[GRAN_AZUL] Request to open file: " << file_path 
@@ -720,12 +586,7 @@ private:
         std::cout << "[GRAN_AZUL] cppcheck --version completed with exit code: " << result.exit_code << "\n";
     }
     
-    void create_build_directory(const CppcheckConfig& config) {
-        // Create build directory
-        std::string cmd = "mkdir -p " + std::string(config.build_dir);
-        auto result = process_executor.execute(cmd);
-        log_panel_->add_log_entry("mkdir -p " + std::string(config.build_dir), result);
-    }
+    // REMOVED: Legacy create_build_directory method
     
     // Helper function to convert analysis library result to widget result
     gran_azul::widgets::AnalysisResult convert_analysis_result(const wip::analysis::AnalysisResult& lib_result) {
@@ -1009,9 +870,14 @@ private:
             analysis_completed_.store(true);
         };
         
+        auto output_callback = [this](const std::string& tool_name, const std::string& output_line) {
+            std::cout << "[GRAN_AZUL] output_callback received from " << tool_name << ": '" << output_line << "'" << std::endl;
+            progress_dialog_->add_output_line("[" + tool_name + "] " + output_line);
+        };
+        
         // Start async analysis with callbacks
         try {
-            current_analysis_future_ = current_analysis_engine_->analyze_async(pending_analysis_tool_names_, pending_analysis_request_, progress_callback, completion_callback);
+            current_analysis_future_ = current_analysis_engine_->analyze_async(pending_analysis_tool_names_, pending_analysis_request_, progress_callback, output_callback, completion_callback);
             
             // Future is now stored and will keep the analysis alive
             std::cout << "[GRAN_AZUL] Analysis future created and stored, analysis running in background\n";
@@ -1067,15 +933,18 @@ private:
         }
     }
     
-    void render_cppcheck_config_window() {
+    void render_analysis_config_window() {
         if (first_frame) {
             ImGuiViewport* viewport = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.1f, viewport->WorkPos.y + viewport->WorkSize.y * 0.1f));
             ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x * 0.8f, viewport->WorkSize.y * 0.8f));
         }
         
-        if (ImGui::Begin("Cppcheck Configuration", &show_cppcheck_config, ImGuiWindowFlags_AlwaysAutoResize)) {
-            cppcheck_widget_->draw();
+        if (ImGui::Begin("Analysis Tools Configuration", &show_analysis_config, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (project_manager_->has_project()) {
+                auto& config = project_manager_->get_current_project_mutable().analysis;
+                analysis_config_widget_->render(config);
+            }
         }
         ImGui::End();
     }
@@ -1351,41 +1220,6 @@ private:
         if (project_manager_->has_project()) {
             const auto& project = project_manager_->get_current_project();
             
-            // Update cppcheck widget configuration from project
-            CppcheckConfig cppcheck_config;
-            
-            // Copy analysis settings from project to cppcheck config
-            const auto& analysis = project.analysis;
-            strcpy(cppcheck_config.source_path, analysis.source_path.c_str());
-            strcpy(cppcheck_config.output_file, analysis.output_file.c_str());
-            strcpy(cppcheck_config.build_dir, analysis.build_dir.c_str());
-            
-            cppcheck_config.enable_all = analysis.enable_all;
-            cppcheck_config.enable_warning = analysis.enable_warning;
-            cppcheck_config.enable_style = analysis.enable_style;
-            cppcheck_config.enable_performance = analysis.enable_performance;
-            cppcheck_config.enable_portability = analysis.enable_portability;
-            cppcheck_config.enable_information = analysis.enable_information;
-            cppcheck_config.enable_unused_function = analysis.enable_unused_function;
-            cppcheck_config.enable_missing_include = analysis.enable_missing_include;
-            
-            cppcheck_config.check_level = analysis.check_level;
-            cppcheck_config.inconclusive = analysis.inconclusive;
-            cppcheck_config.verbose = analysis.verbose;
-            cppcheck_config.cpp_standard = analysis.cpp_standard;
-            cppcheck_config.platform = analysis.platform;
-            cppcheck_config.job_count = analysis.job_count;
-            cppcheck_config.quiet = analysis.quiet;
-            
-            cppcheck_config.suppress_unused_function = analysis.suppress_unused_function;
-            cppcheck_config.suppress_missing_include_system = analysis.suppress_missing_include_system;
-            cppcheck_config.suppress_missing_include = analysis.suppress_missing_include;
-            cppcheck_config.suppress_duplicate_conditional = analysis.suppress_duplicate_conditional;
-            cppcheck_config.use_posix_library = analysis.use_posix_library;
-            cppcheck_config.use_misra_addon = analysis.use_misra_addon;
-            
-            cppcheck_widget_->set_config(cppcheck_config);
-            
             // Update analysis manager from project
             analysis_manager_->load_from_project_config(project);
             analysis_manager_->set_project_base_path(std::filesystem::path(project_manager_->get_current_project_path()).parent_path().string());
@@ -1399,32 +1233,8 @@ private:
         if (project_manager_->has_project()) {
             auto& project = project_manager_->get_current_project_mutable();
             
-            // Update from the new AnalysisManagerWidget (takes priority)
+            // Update from analysis manager widget
             analysis_manager_->save_to_project_config(project);
-            
-            // Legacy support: also sync from old CppcheckWidget if needed
-            const auto& cppcheck_config = cppcheck_widget_->get_config();
-            
-            // Update project analysis settings from UI
-            auto& analysis = project.analysis;
-            // Note: source_path and basic settings now come from AnalysisManagerWidget above
-            
-            analysis.build_dir = cppcheck_config.build_dir;
-            analysis.enable_unused_function = cppcheck_config.enable_unused_function;
-            analysis.enable_missing_include = cppcheck_config.enable_missing_include;
-            
-            analysis.check_level = cppcheck_config.check_level;
-            analysis.inconclusive = cppcheck_config.inconclusive;
-            analysis.verbose = cppcheck_config.verbose;
-            analysis.platform = cppcheck_config.platform;
-            analysis.quiet = cppcheck_config.quiet;
-            
-            analysis.suppress_unused_function = cppcheck_config.suppress_unused_function;
-            analysis.suppress_missing_include_system = cppcheck_config.suppress_missing_include_system;
-            analysis.suppress_missing_include = cppcheck_config.suppress_missing_include;
-            analysis.suppress_duplicate_conditional = cppcheck_config.suppress_duplicate_conditional;
-            analysis.use_posix_library = cppcheck_config.use_posix_library;
-            analysis.use_misra_addon = cppcheck_config.use_misra_addon;
             
             std::cout << "[GRAN_AZUL] Project updated from UI" << std::endl;
         }
@@ -1511,17 +1321,17 @@ private:
             
             std::cout << "[GRAN_AZUL] Selected directory: " << directory_path << "\n";
             
-            // Update the cppcheck configuration
-            auto& config = const_cast<CppcheckConfig&>(cppcheck_widget_->get_config());
-            strncpy(config.source_path, directory_path.c_str(), sizeof(config.source_path) - 1);
-            config.source_path[sizeof(config.source_path) - 1] = '\0';
-            
-            // Update the widget with new configuration
-            cppcheck_widget_->set_config(config);
-            
-            // If we have a project loaded, sync the changes
+            // Update the project configuration with new source path
             if (project_manager_->has_project()) {
+                auto& project = project_manager_->get_current_project_mutable();
+                project.analysis.source_path = directory_path;
+                
+                // Save the project configuration
                 sync_project_from_ui();
+                
+                std::cout << "[GRAN_AZUL] Updated project source path to: " << directory_path << "\n";
+            } else {
+                std::cout << "[GRAN_AZUL] No project loaded - cannot save source path setting\n";
             }
             
             // Remember to free the path memory!
@@ -1571,8 +1381,21 @@ private:
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Run Full Analysis", "F5", nullptr, has_project)) {
-                    auto& config = cppcheck_widget_->get_config();
-                    run_cppcheck_analysis(config);
+                    // Run unified analysis with project configuration
+                    const auto& project_config = project_manager_->get_current_project();
+                    wip::analysis::AnalysisRequest request;
+                    request.source_path = project_config.analysis.source_path;
+                    request.output_file = "analysis_results.xml";
+                    
+                    std::vector<std::string> tool_names;
+                    if (project_config.analysis.enable_cppcheck) tool_names.push_back("cppcheck");
+                    if (project_config.analysis.enable_clang_tidy) tool_names.push_back("clang-tidy");
+                    
+                    if (!tool_names.empty()) {
+                        run_analysis_with_library(tool_names, request);
+                    } else {
+                        std::cout << "[GRAN_AZUL] No analysis tools enabled in project configuration\n";
+                    }
                 }
                 if (ImGui::MenuItem("Run Quick Scan", "Ctrl+F5", nullptr, has_project)) {
                     std::cout << "[GRAN_AZUL] Quick scan requested\n";
@@ -1581,8 +1404,8 @@ private:
                 if (ImGui::MenuItem("Select Source Directory", nullptr, nullptr, has_project)) {
                     select_source_directory();
                 }
-                if (ImGui::MenuItem("Configure Cppcheck (Legacy)", nullptr, nullptr, has_project)) {
-                    show_cppcheck_config = true;
+                if (ImGui::MenuItem("Configure Analysis Tools", nullptr, nullptr, has_project)) {
+                    show_analysis_config = true;
                 }
                 if (ImGui::MenuItem("Test cppcheck --version")) {
                     run_cppcheck_version();

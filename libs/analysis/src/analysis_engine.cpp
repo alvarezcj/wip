@@ -196,9 +196,10 @@ std::future<std::vector<AnalysisResult>> AnalysisEngine::analyze_async(
     const std::vector<std::string>& tool_names,
     const AnalysisRequest& request,
     ProgressCallback progress_callback,
+    OutputCallback output_callback,
     CompletionCallback completion_callback) {
     
-    return std::async(std::launch::async, [this, tool_names, request, progress_callback, completion_callback]() {
+    return std::async(std::launch::async, [this, tool_names, request, progress_callback, output_callback, completion_callback]() {
         try {
             std::cout << "[ANALYSIS_ENGINE] Starting async analysis with progress callbacks\n";
             
@@ -240,10 +241,17 @@ std::future<std::vector<AnalysisResult>> AnalysisEngine::analyze_async(
                         }
                     };
                     
+                    // Create output callback wrapper for this specific tool
+                    auto tool_output_callback = [output_callback, tool_name](const std::string& output_line) {
+                        if (output_callback) {
+                            output_callback(tool_name, output_line);
+                        }
+                    };
+                    
                     std::cout << "[ANALYSIS_ENGINE] Starting tool " << tool_name << " async with source: " << tool_request.source_path << "\n";
                     try {
                         // Start async execution and store future
-                        auto future = tool->execute_async(tool_request, tool_progress_callback);
+                        auto future = tool->execute_async(tool_request, tool_progress_callback, tool_output_callback);
                         tool_futures.emplace_back(tool_name, std::move(future));
                         
                     } catch (const std::exception& e) {
